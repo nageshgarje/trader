@@ -1,0 +1,18 @@
+[
+  {
+    "id": "20261102T140241.072456",
+    "exchange": "NSE",
+    "symbol": "RELIANCE",
+    "createdAt": "2026-11-02T14:02:41.072456+05:30",
+    "dueAt": "2026-11-02T14:17:41.072456+05:30",
+    "entry": 1254.5999755859375,
+    "target": 1256.2199829101562,
+    "lowBand": 1255.67998046875,
+    "highBand": 1256.7599853515624,
+    "signal": "BUY",
+    "confidence": 95,
+    "status": "pending",
+    "targetHit": false,
+    "directionHit": false
+  }
+]
