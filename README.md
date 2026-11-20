@@ -196,6 +196,53 @@ plan, the orders and the positions, at most every 30 seconds (`--no-quotes`
 uses `trader/prices.json` only). Run it from the project folder that holds
 `trader/`, or pass `--folder`.
 
+### Option chain and signals (NSE and BSE options)
+
+`dashboard/options.py` reads an option chain for NIFTY, BANKNIFTY, FINNIFTY,
+MIDCPNIFTY, SENSEX (BSE) or any F&O stock. It works out the put-call ratio, max
+pain, the call and put OI walls (resistance and support), the OI added near the
+money, the ATM implied volatility and the straddle's expected move. It then gives
+a rule-based entry signal: BUY CE, BUY PE, WAIT or NO TRADE. The dashboard shows
+all of it, and shows HOLD or EXIT for a trade you track.
+
+```bash
+# live, with Zerodha Kite Connect (the same app keys as the Kite MCP; its market data is a paid plan)
+export KITE_API_KEY=... KITE_API_SECRET=...
+python3 dashboard/options.py login                          # open the link, log in, copy request_token
+python3 dashboard/options.py login --request-token XXXX     # saves today's token in trader/state/
+python3 dashboard/options.py chain NIFTY --write            # chain + signal -> trader/options.json
+
+# no Kite: download the CSV from nseindia.com's option chain page
+python3 dashboard/options.py chain NIFTY --csv option-chain-ED-NIFTY-24-Nov-2026.csv --lot 75 --write
+
+python3 dashboard/options.py track        # follow the BUY signal you took: the dashboard shows HOLD / EXIT
+python3 dashboard/options.py untrack
+```
+
+The entry signal needs three things:
+
+1. The price closes outside the 15-minute opening range (09:15 to 09:30 IST).
+2. The chain agrees. Of the breakout, the put-call ratio and the OI change, at
+   least two must point the same way.
+3. The next OI wall is at least 1.5R away.
+
+New entries are allowed from 09:30 to 14:30 IST.
+
+- **The option:** it names the ATM option.
+- **Exit levels:** the stop is the opening-range midpoint, and the target is the
+  OI wall or 2R. They are given both as underlying levels and as premiums,
+  where the premiums are delta estimates.
+- **Size:** the number of lots comes from the "nse" max loss.
+- **Time exit:** flat by 15:15 IST.
+
+With a Kite token the dashboard refreshes the chain every 60 seconds. Without
+one, it re-reads the saved chain against the latest delayed spot. NSE's own
+website refuses scripts, so the tool never fetches it. Keep `trader/state/` out
+of git, because it holds the day's Kite token.
+
+These signals are tooling, not advice. Option buyers often lose the whole
+premium, and a delta estimate is off when volatility moves.
+
 ## The tools
 
 All standard-library Python. The data tools read public endpoints and are
@@ -286,7 +333,7 @@ trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
 trader-pelosi/      SKILL.md, ptr.py
-dashboard/          dashboard.py, dashboard.html (the read-only dashboard)
+dashboard/          dashboard.py, dashboard.html (the read-only dashboard), options.py (option chain)
 tests/              unittest suite + offline fixtures
 ```
 

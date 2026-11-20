@@ -1,0 +1,725 @@
+{
+"status": "success",
+"data": {
+"NSE:NIFTY 50": {
+"last_price": 25812.0,
+"ohlc": {
+"close": 25227.9
+}
+},
+"NFO:NIFTY26N2425300CE": {
+"last_price": 541.6,
+"oi": 120000,
+"volume": 360000,
+"depth": {
+"buy": [
+{
+"price": 541.1
+}
+],
+"sell": [
+{
+"price": 542.1
+}
+]
+}
+},
+"NFO:NIFTY26N2425300PE": {
+"last_price": 10.68,
+"oi": 511917,
+"volume": 1535751,
+"depth": {
+"buy": [
+{
+"price": 10.18
+}
+],
+"sell": [
+{
+"price": 11.18
+}
+]
+}
+},
+"NFO:NIFTY26N2425350CE": {
+"last_price": 495.59,
+"oi": 120003,
+"volume": 360009,
+"depth": {
+"buy": [
+{
+"price": 495.09
+}
+],
+"sell": [
+{
+"price": 496.09
+}
+]
+}
+},
+"NFO:NIFTY26N2425350PE": {
+"last_price": 14.63,
+"oi": 661524,
+"volume": 1984572,
+"depth": {
+"buy": [
+{
+"price": 14.13
+}
+],
+"sell": [
+{
+"price": 15.13
+}
+]
+}
+},
+"NFO:NIFTY26N2425400CE": {
+"last_price": 450.73,
+"oi": 120022,
+"volume": 360066,
+"depth": {
+"buy": [
+{
+"price": 450.23
+}
+],
+"sell": [
+{
+"price": 451.23
+}
+]
+}
+},
+"NFO:NIFTY26N2425400PE": {
+"last_price": 19.73,
+"oi": 923728,
+"volume": 2771184,
+"depth": {
+"buy": [
+{
+"price": 19.23
+}
+],
+"sell": [
+{
+"price": 20.23
+}
+]
+}
+},
+"NFO:NIFTY26N2425450CE": {
+"last_price": 407.23,
+"oi": 120132,
+"volume": 360396,
+"depth": {
+"buy": [
+{
+"price": 406.73
+}
+],
+"sell": [
+{
+"price": 407.73
+}
+]
+}
+},
+"NFO:NIFTY26N2425450PE": {
+"last_price": 26.2,
+"oi": 1298833,
+"volume": 3896499,
+"depth": {
+"buy": [
+{
+"price": 25.7
+}
+],
+"sell": [
+{
+"price": 26.7
+}
+]
+}
+},
+"NFO:NIFTY26N2425500CE": {
+"last_price": 365.34,
+"oi": 120668,
+"volume": 362004,
+"depth": {
+"buy": [
+{
+"price": 364.84
+}
+],
+"sell": [
+{
+"price": 365.84
+}
+]
+}
+},
+"NFO:NIFTY26N2425500PE": {
+"last_price": 34.27,
+"oi": 1721998,
+"volume": 5165994,
+"depth": {
+"buy": [
+{
+"price": 33.77
+}
+],
+"sell": [
+{
+"price": 34.77
+}
+]
+}
+},
+"NFO:NIFTY26N2425550CE": {
+"last_price": 325.29,
+"oi": 122895,
+"volume": 368685,
+"depth": {
+"buy": [
+{
+"price": 324.79
+}
+],
+"sell": [
+{
+"price": 325.79
+}
+]
+}
+},
+"NFO:NIFTY26N2425550PE": {
+"last_price": 44.18,
+"oi": 2066334,
+"volume": 6199002,
+"depth": {
+"buy": [
+{
+"price": 43.68
+}
+],
+"sell": [
+{
+"price": 44.68
+}
+]
+}
+},
+"NFO:NIFTY26N2425600CE": {
+"last_price": 287.3,
+"oi": 130750,
+"volume": 392250,
+"depth": {
+"buy": [
+{
+"price": 286.8
+}
+],
+"sell": [
+{
+"price": 287.8
+}
+]
+}
+},
+"NFO:NIFTY26N2425600PE": {
+"last_price": 56.15,
+"oi": 2200000,
+"volume": 6600000,
+"depth": {
+"buy": [
+{
+"price": 55.65
+}
+],
+"sell": [
+{
+"price": 56.65
+}
+]
+}
+},
+"NFO:NIFTY26N2425650CE": {
+"last_price": 251.58,
+"oi": 154204,
+"volume": 462612,
+"depth": {
+"buy": [
+{
+"price": 251.08
+}
+],
+"sell": [
+{
+"price": 252.08
+}
+]
+}
+},
+"NFO:NIFTY26N2425650PE": {
+"last_price": 70.4,
+"oi": 2066334,
+"volume": 6199002,
+"depth": {
+"buy": [
+{
+"price": 69.9
+}
+],
+"sell": [
+{
+"price": 70.9
+}
+]
+}
+},
+"NFO:NIFTY26N2425700CE": {
+"last_price": 218.33,
+"oi": 213264,
+"volume": 639792,
+"depth": {
+"buy": [
+{
+"price": 217.83
+}
+],
+"sell": [
+{
+"price": 218.83
+}
+]
+}
+},
+"NFO:NIFTY26N2425700PE": {
+"last_price": 87.11,
+"oi": 1721998,
+"volume": 5165994,
+"depth": {
+"buy": [
+{
+"price": 86.61
+}
+],
+"sell": [
+{
+"price": 87.61
+}
+]
+}
+},
+"NFO:NIFTY26N2425750CE": {
+"last_price": 187.67,
+"oi": 337937,
+"volume": 1013811,
+"depth": {
+"buy": [
+{
+"price": 187.17
+}
+],
+"sell": [
+{
+"price": 188.17
+}
+]
+}
+},
+"NFO:NIFTY26N2425750PE": {
+"last_price": 106.42,
+"oi": 1298833,
+"volume": 3896499,
+"depth": {
+"buy": [
+{
+"price": 105.92
+}
+],
+"sell": [
+{
+"price": 106.92
+}
+]
+}
+},
+"NFO:NIFTY26N2425800CE": {
+"last_price": 159.73,
+"oi": 556440,
+"volume": 1669320,
+"depth": {
+"buy": [
+{
+"price": 159.23
+}
+],
+"sell": [
+{
+"price": 160.23
+}
+]
+}
+},
+"NFO:NIFTY26N2425800PE": {
+"last_price": 128.43,
+"oi": 923728,
+"volume": 2771184,
+"depth": {
+"buy": [
+{
+"price": 127.93
+}
+],
+"sell": [
+{
+"price": 128.93
+}
+]
+}
+},
+"NFO:NIFTY26N2425850CE": {
+"last_price": 134.53,
+"oi": 1069027,
+"volume": 3207081,
+"depth": {
+"buy": [
+{
+"price": 134.03
+}
+],
+"sell": [
+{
+"price": 135.03
+}
+]
+}
+},
+"NFO:NIFTY26N2425850PE": {
+"last_price": 153.2,
+"oi": 411524,
+"volume": 1234572,
+"depth": {
+"buy": [
+{
+"price": 152.7
+}
+],
+"sell": [
+{
+"price": 153.7
+}
+]
+}
+},
+"NFO:NIFTY26N2425900CE": {
+"last_price": 112.1,
+"oi": 1421665,
+"volume": 4264995,
+"depth": {
+"buy": [
+{
+"price": 111.6
+}
+],
+"sell": [
+{
+"price": 112.6
+}
+]
+}
+},
+"NFO:NIFTY26N2425900PE": {
+"last_price": 180.73,
+"oi": 261917,
+"volume": 785751,
+"depth": {
+"buy": [
+{
+"price": 180.23
+}
+],
+"sell": [
+{
+"price": 181.23
+}
+]
+}
+},
+"NFO:NIFTY26N2425950CE": {
+"last_price": 92.36,
+"oi": 1708611,
+"volume": 5125833,
+"depth": {
+"buy": [
+{
+"price": 91.86
+}
+],
+"sell": [
+{
+"price": 92.86
+}
+]
+}
+},
+"NFO:NIFTY26N2425950PE": {
+"last_price": 210.95,
+"oi": 191045,
+"volume": 573135,
+"depth": {
+"buy": [
+{
+"price": 210.45
+}
+],
+"sell": [
+{
+"price": 211.45
+}
+]
+}
+},
+"NFO:NIFTY26N2426000CE": {
+"last_price": 75.23,
+"oi": 1820000,
+"volume": 5460000,
+"depth": {
+"buy": [
+{
+"price": 74.73
+}
+],
+"sell": [
+{
+"price": 75.73
+}
+]
+}
+},
+"NFO:NIFTY26N2426000PE": {
+"last_price": 243.78,
+"oi": 162900,
+"volume": 488700,
+"depth": {
+"buy": [
+{
+"price": 243.28
+}
+],
+"sell": [
+{
+"price": 244.28
+}
+]
+}
+},
+"NFO:NIFTY26N2426050CE": {
+"last_price": 60.54,
+"oi": 1708611,
+"volume": 5125833,
+"depth": {
+"buy": [
+{
+"price": 60.04
+}
+],
+"sell": [
+{
+"price": 61.04
+}
+]
+}
+},
+"NFO:NIFTY26N2426050PE": {
+"last_price": 279.06,
+"oi": 153474,
+"volume": 460422,
+"depth": {
+"buy": [
+{
+"price": 278.56
+}
+],
+"sell": [
+{
+"price": 279.56
+}
+]
+}
+},
+"NFO:NIFTY26N2426100CE": {
+"last_price": 48.13,
+"oi": 1421665,
+"volume": 4264995,
+"depth": {
+"buy": [
+{
+"price": 47.63
+}
+],
+"sell": [
+{
+"price": 48.63
+}
+]
+}
+},
+"NFO:NIFTY26N2426100PE": {
+"last_price": 316.61,
+"oi": 150802,
+"volume": 452406,
+"depth": {
+"buy": [
+{
+"price": 316.11
+}
+],
+"sell": [
+{
+"price": 317.11
+}
+]
+}
+},
+"NFO:NIFTY26N2426150CE": {
+"last_price": 37.79,
+"oi": 1069027,
+"volume": 3207081,
+"depth": {
+"buy": [
+{
+"price": 37.29
+}
+],
+"sell": [
+{
+"price": 38.29
+}
+]
+}
+},
+"NFO:NIFTY26N2426150PE": {
+"last_price": 356.23,
+"oi": 150158,
+"volume": 450474,
+"depth": {
+"buy": [
+{
+"price": 355.73
+}
+],
+"sell": [
+{
+"price": 356.73
+}
+]
+}
+},
+"NFO:NIFTY26N2426200CE": {
+"last_price": 29.29,
+"oi": 756440,
+"volume": 2269320,
+"depth": {
+"buy": [
+{
+"price": 28.79
+}
+],
+"sell": [
+{
+"price": 29.79
+}
+]
+}
+},
+"NFO:NIFTY26N2426200PE": {
+"last_price": 397.7,
+"oi": 150026,
+"volume": 450078,
+"depth": {
+"buy": [
+{
+"price": 397.2
+}
+],
+"sell": [
+{
+"price": 398.2
+}
+]
+}
+},
+"NFO:NIFTY26N2426250CE": {
+"last_price": 22.41,
+"oi": 537937,
+"volume": 1613811,
+"depth": {
+"buy": [
+{
+"price": 21.91
+}
+],
+"sell": [
+{
+"price": 22.91
+}
+]
+}
+},
+"NFO:NIFTY26N2426250PE": {
+"last_price": 440.78,
+"oi": 150003,
+"volume": 450009,
+"depth": {
+"buy": [
+{
+"price": 440.28
+}
+],
+"sell": [
+{
+"price": 441.28
+}
+]
+}
+},
+"NFO:NIFTY26N2426300CE": {
+"last_price": 16.92,
+"oi": 413264,
+"volume": 1239792,
+"depth": {
+"buy": [
+{
+"price": 16.42
+}
+],
+"sell": [
+{
+"price": 17.42
+}
+]
+}
+},
+"NFO:NIFTY26N2426300PE": {
+"last_price": 485.25,
+"oi": 150000,
+"volume": 450000,
+"depth": {
+"buy": [
+{
+"price": 484.75
+}
+],
+"sell": [
+{
+"price": 485.75
+}
+]
+}
+}
+}
+}

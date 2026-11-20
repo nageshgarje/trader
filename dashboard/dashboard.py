@@ -18,6 +18,9 @@ What it shows, for the US (NYSE) and India (NSE) side by side:
   - the scanner's latest hits
   - India: NIFTY 50, NIFTY BANK, SENSEX and INDIA VIX, and each stock's NSE and BSE price side by side
     (config "dashboard": {"india_watch": ["RELIANCE", "TCS"]} or --india RELIANCE,TCS picks the stocks)
+  - the option chain (NIFTY, BANKNIFTY, SENSEX or an F&O stock) with PCR, max pain, OI walls, IV, and
+    a rule-based entry signal (BUY CE / BUY PE / WAIT) and HOLD or EXIT for a tracked trade: live from
+    Kite Connect when a token is set, else from trader/options.json (dashboard/options.py writes it)
 
 Prices: the latest delayed Yahoo quote for the plan, the orders and the positions, at most once every
 30 seconds (--no-quotes to use trader/prices.json only). The server listens on 127.0.0.1 only.
@@ -50,6 +53,10 @@ def _load(folder, name):
 
 alerts = _load("trader-alerts", "alerts")
 ticket = _load("trader-broker", "ticket")
+_ospec = importlib.util.spec_from_file_location("dash_options", os.path.join(HERE, "options.py"))
+options = importlib.util.module_from_spec(_ospec)
+_ospec.loader.exec_module(options)
+OPTIONS_EVERY = 60        # seconds between option chain refreshes
 
 
 def read(path):
@@ -185,6 +192,78 @@ def india(cfg, plan, folder, quotes, prices, override=None):
     return {"indexes": indexes, "stocks": stocks, "source": source, "live": quotes.enabled}
 
 
+class Chains(object):
+    """The option chain the page shows, rebuilt at most every OPTIONS_EVERY seconds. Read only: the OI
+    seen first (for OI change) lives in memory, never in a file."""
+
+    def __init__(self, enabled=True):
+        self.enabled, self.kite, self.cache, self.base = enabled, None, None, {}
+
+    def get(self, folder, cfg, symbol=None):
+        doc = read(os.path.join(folder, "trader", "options.json"))
+        oc = cfg.get("options") if isinstance(cfg.get("options"), dict) else {}
+        sym = symbol or oc.get("symbol") or (doc or {}).get("symbol")
+        if not sym:
+            return None
+        sym = options.underlying(sym)
+        n = int(oc.get("strikes") or options.DEFAULTS["strikes"])
+        trade = (doc or {}).get("trade") if (doc or {}).get("symbol") == sym else None
+        key = (os.path.abspath(folder), sym, json.dumps(trade, sort_keys=True), (doc or {}).get("computed_at"))
+        if self.cache and self.cache[0] == key and time.time() - self.cache[1] < OPTIONS_EVERY:
+            return self.cache[2]
+        out = self._build(folder, cfg, sym, doc, n)
+        if trade and out.get("analysis"):
+            row = next((r for r in out["rows_all"] if r["strike"] == trade["strike"]), {})
+            leg = row.get(trade["side"].lower()) or {}
+            out["trade"] = dict(trade, check=options.exit_check(trade, out["spot"], leg.get("ltp")))
+        out.pop("rows_all", None)
+        self.cache = (key, time.time(), out)
+        return out
+
+    def _build(self, folder, cfg, sym, doc, n):
+        today = options.now_ist().date().isoformat()
+        try:
+            kite = options.Kite.from_env(folder) if self.enabled else None
+            if kite and (not self.kite or self.kite.token != kite.token):
+                self.kite = kite
+            same = isinstance(doc, dict) and doc.get("symbol") == sym
+            if kite and self.enabled:
+                expiry = doc.get("expiry") if same and (doc.get("expiry") or "") >= today else None
+                base = self.base.get((sym, expiry, today))
+                if base is None and same:
+                    base = options.oi_base_for(doc, sym, expiry or doc.get("expiry"), today)[0]
+                d = options.build(sym, folder, self.kite, expiry=expiry, cfg=cfg, oi_base=base)
+                if (sym, d["expiry"], today) not in self.base:
+                    self.base[(sym, d["expiry"], today)] = base or {
+                        leg["tradingsymbol"]: leg["oi"] for r in d["rows"] for leg in (r.get("ce"), r.get("pe"))
+                        if leg and leg.get("tradingsymbol") and leg.get("oi") is not None}
+                live = "kite"
+            elif same:
+                chain = {k: doc.get(k) for k in ("symbol", "exchange", "source", "expiry", "expiries", "lot", "as_of",
+                                                  "prev_close", "rows", "file")}
+                chain["spot"] = None if self.enabled else doc.get("spot")
+                d = options.build(sym, folder, chain=chain, cfg=cfg) if self.enabled else dict(doc)
+                live = "saved"
+            else:
+                return {"symbol": sym, "error": "no chain for %s yet: set a Kite token or run "
+                        "`python3 dashboard/options.py chain %s --csv <NSE download> --write`" % (sym, sym)}
+        except (options.OptionsError, alerts.AlertError, OSError, ValueError, KeyError) as e:
+            if isinstance(doc, dict) and doc.get("symbol") == sym and doc.get("analysis"):
+                d, live = dict(doc), "saved"
+                d.setdefault("notes", []).append("could not refresh: %s" % e)
+            else:
+                return {"symbol": sym, "error": str(e)}
+        d["mode"] = live
+        d["rows_all"] = d["rows"]
+        try:
+            d["rows"] = options.window(d, n)
+        except (StopIteration, KeyError, TypeError):
+            pass
+        d.pop("oi_base", None)
+        d.pop("trade", None)
+        return d
+
+
 def clocks():
     out = []
     for code in ("us", "nse"):
@@ -273,7 +352,7 @@ def broker_log(folder):
     return out
 
 
-def state(folder, quotes, india_list=None):
+def state(folder, quotes, india_list=None, chains=None):
     """Everything the page shows, as one JSON object."""
     t = lambda *p: os.path.join(folder, "trader", *p)
     cfg = read(t("config.json")) or {}
@@ -310,6 +389,10 @@ def state(folder, quotes, india_list=None):
         log = broker_log(folder)
         mk = clocks()
         ind = india(cfg, plan, folder, quotes, prices, india_list)
+        try:
+            opt = (chains or Chains(quotes.enabled)).get(folder, cfg)
+        except Exception as e:                  # the chain is a nice-to-have: never break the page
+            opt = {"error": "%s: %s" % (type(e).__name__, e)}
     plan_out = None
     if isinstance(plan, dict) and plan.get("symbol"):
         sym = str(plan["symbol"]).upper()
@@ -357,6 +440,7 @@ def state(folder, quotes, india_list=None):
         if isinstance(watch, dict) else None,
         "quotes": q,
         "india": ind,
+        "options": opt,
     }
 
 
@@ -368,7 +452,9 @@ def page(snapshot=None):
     return text.replace("/*__SNAPSHOT__*/null", data)
 
 
-def make_handler(folder, quotes, india_list=None):
+def make_handler(folder, quotes, india_list=None, chains=None):
+    chains = chains or Chains(quotes.enabled)
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype):
             data = body.encode("utf-8")
@@ -385,7 +471,7 @@ def make_handler(folder, quotes, india_list=None):
                 self._send(200, page(), "text/html; charset=utf-8")
             elif path == "/api/state":
                 try:
-                    self._send(200, json.dumps(state(folder, quotes, india_list)), "application/json")
+                    self._send(200, json.dumps(state(folder, quotes, india_list, chains)), "application/json")
                 except Exception as e:            # show the problem on the page, keep serving
                     self._send(500, json.dumps({"error": "%s: %s" % (type(e).__name__, e)}), "application/json")
             else:

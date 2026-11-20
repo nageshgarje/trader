@@ -85,6 +85,17 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--soft); border-radius: 6px
 .range i { position: absolute; top: -3px; width: 2px; height: 10px; background: var(--ink); }
 @media (max-width: 900px) { .wide { display: none; } }
 .up { color: var(--green); } .down { color: var(--red); }
+.oc td, .oc th { padding: 4px 6px; font-size: 12.5px; }
+.oc .k { text-align: center; font-weight: 650; background: var(--soft); }
+.oc tr.atm td { border-top: 2px solid var(--blue); border-bottom: 2px solid var(--blue); }
+.oc td.itm { background: var(--amber-bg); }
+.oc .bar { position: relative; }
+.oc .bar i { position: absolute; top: 3px; bottom: 3px; opacity: .28; border-radius: 2px; }
+.oc .bar.c i { right: 0; background: var(--red); } .oc .bar.p i { left: 0; background: var(--green); }
+.oc .bar span { position: relative; }
+.sig { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.sig ul { margin: 6px 0 0; padding-left: 18px; } .sig li { margin: 2px 0; }
+@media (max-width: 700px) { .oc .x { display: none; } }
 .foot { grid-column: span 12; color: var(--muted); font-size: 12px; text-align: center; padding-top: 4px; }
 button.theme { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; }
 </style>
@@ -100,6 +111,7 @@ button.theme { background: none; border: 1px solid var(--line); color: var(--mut
 <main>
   <section class="card s12"><h2>Markets</h2><div class="clocks" id="clocks"></div></section>
   <section class="card s12" id="india-card"><h2>India: NSE · BSE <small id="india-meta"></small></h2><div id="india"></div></section>
+  <section class="card s12" id="opt-card"><h2>Option chain <small id="opt-meta"></small></h2><div id="opt"></div></section>
   <section class="card s7"><h2>Trade plan <small id="plan-meta"></small></h2><div id="plan"></div></section>
   <section class="card s5"><h2>Time Machine <small id="tm-meta"></small></h2><div id="tm"></div></section>
   <section class="card s12"><h2>Orders <small id="orders-meta"></small></h2><div id="orders"></div></section>
@@ -283,6 +295,63 @@ function renderIndia(d) {
     <p class="note">Stocks from ${d.source === "config" ? "your config (dashboard.india_watch)" : d.source === "--india" ? "--india" : "the default list; set dashboard.india_watch in trader/config.json to choose"}, plus your plan and NSE positions. The skills trade on NSE; BSE is shown for comparison. The two quotes can be seconds apart, so a small gap is not a free trade.</p>`;
 }
 
+function renderOptions(o) {
+  if (!o) {
+    $("opt-meta").textContent = "";
+    $("opt").innerHTML = `<div class="empty">No option chain yet. With a Kite Connect token: <span class="mono">python3 dashboard/options.py chain NIFTY --write</span>. Without one, download the option chain CSV from nseindia.com and run <span class="mono">options.py chain NIFTY --csv FILE --lot 75 --write</span>. Or set <span class="mono">"options": {"symbol": "NIFTY"}</span> in trader/config.json.</div>`;
+    return;
+  }
+  if (o.error) { $("opt-meta").textContent = o.symbol || ""; $("opt").innerHTML = `<div class="err">${esc(o.error)}</div>`; return; }
+  const a = o.analysis, s = o.signal, f = (v) => money(v, "nse", true), r = (v) => money(v, "nse");
+  const big = (v) => v == null ? "–" : Number(v).toLocaleString("en-IN", {maximumFractionDigits: 0});
+  $("opt-meta").textContent = `${o.symbol} · ${o.exchange} · expiry ${o.expiry || "?"} · ${o.mode === "kite" ? "live from Kite" : (o.source === "nse-csv" ? "NSE CSV of " + o.as_of : "saved " + o.as_of)}`;
+  const tiles = [["Spot", f(o.spot), o.prev_close ? chg({change: o.spot - o.prev_close, pct: (o.spot - o.prev_close) / o.prev_close * 100}, true) : ""],
+    ["PCR (OI)", a.pcr ?? "–", `<span class="sub">${a.pcr == null ? "" : a.pcr >= 1.2 ? "put-heavy: support" : a.pcr <= 0.8 ? "call-heavy: pressure" : "neutral"}</span>`],
+    ["Max pain", f(a.max_pain), `<span class="sub">ATM ${f(a.atm)}</span>`],
+    ["Support · put wall", f(a.support), `<span class="sub">resistance · call wall ${f(a.resistance)}</span>`],
+    ["ATM IV", a.atm_iv == null ? "–" : (a.atm_iv * 100).toFixed(1) + "%", `<span class="sub">${a.days_to_expiry ?? "–"} days to expiry${a.expires_today ? " · expires today" : ""}</span>`],
+    ["Expected move", a.straddle ? "±" + f(a.straddle) : "–", `<span class="sub">ATM straddle, about ${a.expected_move_pct ?? "–"}%</span>`]]
+    .map(([n, v, sub]) => `<div class="tile"><div class="sub">${n}</div><div class="big">${v}</div><div>${sub}</div></div>`).join("");
+  const kind = /^BUY/.test(s.action) ? "green" : s.action === "EXIT ALL" ? "red" : s.action === "WAIT" ? "amber" : "grey";
+  const t = s.trade;
+  const sig = `<div class="sig"><div><strong>Entry signal</strong> ${badge(s.action, kind)} <span class="sub">${esc(s.at)} IST${s.score != null ? " · score " + (s.score > 0 ? "+" : "") + s.score : ""}</span></div>
+    ${(s.votes || []).length ? `<ul>${s.votes.map(([v, txt]) => `<li><span class="${v.startsWith("+") ? "up" : v.startsWith("-") ? "down" : "sub"}">${esc(v)}</span> ${esc(txt)}</li>`).join("")}</ul>` : ""}
+    ${(s.reasons || []).map((x) => `<div class="note">${esc(x)}</div>`).join("")}
+    ${t && t.premium != null ? `<dl class="kv" style="margin-top:8px">
+      <dt>Option</dt><dd><strong>${esc(o.symbol)} ${f(t.strike)} ${esc(t.side)}</strong> <span class="sub">${esc(t.tradingsymbol || "")} · lot ${o.lot ?? "?"}</span></dd>
+      <dt>Entry</dt><dd>premium about ${r(t.premium)} <span class="sub">(spot ${f(t.under_entry)}, delta ${t.delta})</span></dd>
+      <dt>Exit: stop</dt><dd>premium ${r(t.premium_stop)} or ${esc(o.symbol)} ${t.side === "CE" ? "falls to" : "rises to"} ${f(t.under_stop)} <span class="sub">(opening-range midpoint)</span></dd>
+      <dt>Exit: target</dt><dd>premium ${r(t.premium_target)} or ${esc(o.symbol)} reaches ${f(t.under_target)} <span class="sub">(${esc(t.target_label)})</span></dd>
+      <dt>Exit: time</dt><dd>${esc(t.flat_by)} IST, win or lose</dd>
+      ${t.lots != null ? `<dt>Size</dt><dd>${t.lots} lot(s) · about ${r(t.risk_per_lot)} a lot at the stop</dd>` : ""}
+    </dl>` : ""}</div>`;
+  let trade = "";
+  if (o.trade) {
+    const c = o.trade.check;
+    trade = `<div class="sig"><div><strong>Your tracked trade</strong> ${badge(c.action, c.action === "EXIT" ? "red" : "blue")} <span class="sub">${esc(o.symbol)} ${f(o.trade.strike)} ${esc(o.trade.side)} from ${r(o.trade.premium)} · now ${r(c.premium)}${c.pnl != null ? ` · <span class="${c.pnl >= 0 ? "up" : "down"}">${c.pnl >= 0 ? "+" : ""}${r(c.pnl)}</span>` : ""}</span></div>
+      ${c.reasons.map((x) => `<div class="note">${esc(x)}</div>`).join("")}
+      <div class="note">Stop ${r(o.trade.premium_stop)} / ${f(o.trade.under_stop)} · target ${r(o.trade.premium_target)} / ${f(o.trade.under_target)} · flat by ${esc(o.trade.flat_by)} IST. <span class="mono">options.py untrack</span> when you are out.</div></div>`;
+  }
+  const rows = o.rows || [], mx = Math.max(1, ...rows.flatMap((x) => [(x.ce || {}).oi || 0, (x.pe || {}).oi || 0]));
+  const iv = (v) => v == null ? "–" : (v * 100).toFixed(1);
+  const cg = (v) => v == null ? "–" : `<span class="${v >= 0 ? "up" : "down"}">${v >= 0 ? "+" : ""}${big(v)}</span>`;
+  const table = `<div class="scroll"><table class="oc">
+    <tr><th class="num">CE OI</th><th class="num x">chg OI</th><th class="num x">IV</th><th class="num">CE LTP</th><th class="k">Strike</th><th class="num">PE LTP</th><th class="num x">IV</th><th class="num x">chg OI</th><th class="num">PE OI</th></tr>
+    ${rows.map((x) => { const c = x.ce || {}, p = x.pe || {}, itmC = x.strike < o.spot, itmP = x.strike > o.spot;
+      return `<tr class="${x.strike === a.atm ? "atm" : ""}">
+      <td class="num bar c${itmC ? " itm" : ""}"><i style="width:${((c.oi || 0) / mx * 100).toFixed(1)}%"></i><span>${big(c.oi)}</span></td>
+      <td class="num x${itmC ? " itm" : ""}">${cg(c.chg_oi)}</td><td class="num x sub${itmC ? " itm" : ""}">${iv(c.iv)}</td>
+      <td class="num${itmC ? " itm" : ""}">${c.ltp == null ? "–" : Number(c.ltp).toFixed(2)}</td>
+      <td class="k">${big(x.strike)}${x.strike === a.resistance ? ' <span class="down" title="call wall">▲</span>' : ""}${x.strike === a.support ? ' <span class="up" title="put wall">▼</span>' : ""}</td>
+      <td class="num${itmP ? " itm" : ""}">${p.ltp == null ? "–" : Number(p.ltp).toFixed(2)}</td>
+      <td class="num x sub${itmP ? " itm" : ""}">${iv(p.iv)}</td><td class="num x${itmP ? " itm" : ""}">${cg(p.chg_oi)}</td>
+      <td class="num bar p${itmP ? " itm" : ""}"><i style="width:${((p.oi || 0) / mx * 100).toFixed(1)}%"></i><span>${big(p.oi)}</span></td></tr>`; }).join("")}
+  </table></div>`;
+  $("opt").innerHTML = `<div class="tiles">${tiles}</div>${trade}${sig}${table}
+    ${(o.notes || []).map((x) => `<div class="note">${esc(x)}</div>`).join("")}
+    <p class="note">Shaded cells are in the money; ▲ is the biggest call OI above the price (resistance), ▼ the biggest put OI below (support). The signal needs the 15-minute opening range to break and the chain to agree; premiums at the stop and target are delta estimates. Rule-based tooling, not advice: option buyers often lose the whole premium.</p>`;
+}
+
 function renderLog(l) {
   if (!l.length) { $("log").innerHTML = `<div class="empty">No decisions recorded today.</div>`; return; }
   const kind = {placed: "green", approved: "blue", declined: "grey", denied: "grey", failed: "red", filled: "green"};
@@ -310,7 +379,7 @@ function render(s) {
   $("folder").textContent = s.folder + "/trader";
   $("acct").innerHTML = s.paper ? badge("PAPER", "blue") : badge("LIVE: real money", "red");
   $("updated").textContent = SNAPSHOT ? `Snapshot of ${new Date(s.generated_at).toLocaleString()}` : `Updated ${new Date().toLocaleTimeString()} · every 15 s`;
-  renderClocks(s.markets); renderIndia(s.india); renderPlan(s.plan, s.timemachine); renderTM(s.timemachine);
+  renderClocks(s.markets); renderIndia(s.india); renderOptions(s.options); renderPlan(s.plan, s.timemachine); renderTM(s.timemachine);
   renderOrders(s.orders, s.risk, s.orders_market); renderAlerts(s.alerts); renderPositions(s.portfolios);
   renderLog(s.log); renderScan(s.watchlist);
 }
