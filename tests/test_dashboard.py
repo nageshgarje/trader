@@ -132,6 +132,48 @@ class Dashboard(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_india_panel_lists_nse_and_bse(self):
+        self.build_nse_trade()
+        s = dash.state(".", self.quotes)
+        ind = s["india"]
+        self.assertEqual([i["name"] for i in ind["indexes"]], ["NIFTY 50", "NIFTY BANK", "SENSEX", "INDIA VIX"])
+        self.assertEqual([i["exchange"] for i in ind["indexes"]], ["NSE", "NSE", "BSE", "NSE"])
+        names = [x["name"] for x in ind["stocks"]]
+        self.assertEqual(names[0], "RELIANCE")                    # the plan's stock leads, once
+        self.assertEqual(names.count("RELIANCE"), 1)
+        self.assertEqual(ind["source"], "default")
+        self.assertEqual(ind["stocks"][0]["nse"]["price"], 1371.25)   # from trader/prices.json when offline
+        self.assertIsNone(ind["stocks"][0]["bse"])
+        self.assertIsNone(ind["stocks"][0]["gap"])
+
+    def test_india_watch_from_config_and_flag(self):
+        with open("trader/config.json", "w") as fh:
+            json.dump({"dashboard": {"india_watch": ["TCS.NS", "infy", "M&M", "^NSEI", "bad name!"]}}, fh)
+        ind = dash.state(".", self.quotes)["india"]
+        self.assertEqual(([x["name"] for x in ind["stocks"]], ind["source"]), (["TCS", "INFY", "M&M"], "config"))
+        ind = dash.state(".", self.quotes, "SBIN,SBIN.BO")["india"]
+        self.assertEqual(([x["name"] for x in ind["stocks"]], ind["source"]), (["SBIN"], "--india"))
+        with open("trader/config.json", "w") as fh:
+            json.dump({"dashboard": {"india": False}}, fh)
+        self.assertIsNone(dash.state(".", self.quotes)["india"])
+
+    def test_india_quotes_ask_yahoo_for_bse_symbols_as_they_are(self):
+        asked = []
+
+        class Fake(dash.Quotes):
+            def get(self, symbols, market=None):
+                asked.append((market, list(symbols)))
+                q = lambda p, prev: {"price": p, "prev_close": prev, "high": p + 5, "low": p - 5, "time": "t"}
+                return {"^BSESN": q(84000.0, 82000.0), "RELIANCE.NS": q(1377.5, 1375.6),
+                        "RELIANCE.BO": q(1375.1, 1370.0)} if market == "nse" else {}
+
+        ind = dash.state(".", Fake(enabled=True), "RELIANCE")["india"]
+        self.assertIn(("nse", ["^NSEI", "^NSEBANK", "^BSESN", "^INDIAVIX", "RELIANCE.NS", "RELIANCE.BO"]), asked)
+        sensex = ind["indexes"][2]["quote"]
+        self.assertEqual((sensex["change"], sensex["pct"]), (2000.0, 2.44))
+        rel = ind["stocks"][0]
+        self.assertEqual((rel["nse"]["price"], rel["bse"]["price"], rel["gap"]), (1377.5, 1375.1, 2.4))
+
     def test_no_trader_folder_is_a_plain_error(self):
         shutil.rmtree("trader")
         code, _, err = run(dash, ["state", "--no-quotes"])

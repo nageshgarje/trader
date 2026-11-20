@@ -176,6 +176,11 @@ python3 dashboard/dashboard.py snapshot     # or one static page: trader/dashboa
 It shows:
 
 - the NYSE and NSE clocks
+- India at a glance: NIFTY 50, NIFTY BANK, SENSEX (BSE) and INDIA VIX, and
+  each of your stocks priced on NSE and on BSE side by side. Pick the stocks
+  with `"dashboard": {"india_watch": ["RELIANCE", "TCS", "SBIN"]}` in
+  `trader/config.json` or `--india RELIANCE,TCS`. Your plan's stock and your NSE
+  positions are added on their own. BSE is for comparison: the skills trade on NSE
 - the trade plan, with the latest price on a stop, entry and target ladder
 - the Time Machine's odds and verdict
 - every proposed order, with trader-risk's verdict and trader-broker's status

@@ -16,6 +16,8 @@ What it shows, for the US (NYSE) and India (NSE) side by side:
   - cash and positions per market, valued at the latest price
   - today's decisions from trader-broker's log
   - the scanner's latest hits
+  - India: NIFTY 50, NIFTY BANK, SENSEX and INDIA VIX, and each stock's NSE and BSE price side by side
+    (config "dashboard": {"india_watch": ["RELIANCE", "TCS"]} or --india RELIANCE,TCS picks the stocks)
 
 Prices: the latest delayed Yahoo quote for the plan, the orders and the positions, at most once every
 30 seconds (--no-quotes to use trader/prices.json only). The server listens on 127.0.0.1 only.
@@ -30,6 +32,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,7 +74,9 @@ class Quotes(object):
     def __init__(self, enabled=True):
         self.enabled, self.cache = enabled, {}
 
-    def get(self, symbols):
+    def get(self, symbols, market=None):
+        """{SYM: quote}. market=None sorts each symbol into US or NSE; "nse" takes Yahoo symbols as they
+        are, so RELIANCE.BO and ^BSESN (BSE) work too."""
         out, want = {}, []
         now = time.time()
         for s in symbols:
@@ -82,20 +87,102 @@ class Quotes(object):
                 want.append(s)
         if self.enabled and want:
             for code in ("us", "nse"):
-                group = [s for s in want if alerts.market_for(s) == code]
-                if not group:
-                    continue
-                alerts.use_market(code)
-                try:
-                    got, _ = alerts.get_quotes(group, "yahoo", None, pause=0.2)
-                except Exception:          # a quote is a nice-to-have: never break the page
-                    got = {}
-                finally:
-                    alerts.use_market("us")
-                for s, q in got.items():
-                    self.cache[s] = (now, q)
-                    out[s] = q
+                group = [s for s in want if (market or alerts.market_for(s)) == code]
+                if group:
+                    for s, q in self._fetch(code, group).items():
+                        self.cache[s] = (now, q)
+                        out[s] = q
         return out
+
+    @staticmethod
+    def _fetch(code, group):
+        """A few requests at a time, so a dozen symbols take about as long as two."""
+        alerts.use_market(code)
+        try:
+            def one(s):
+                try:
+                    return alerts.get_quotes([s], "yahoo", None, pause=0)[0]
+                except Exception:          # a quote is a nice-to-have: never break the page
+                    return {}
+            got = {}
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                for d in pool.map(one, group):
+                    got.update(d)
+            return got
+        finally:
+            alerts.use_market("us")
+
+
+# India at a glance. Yahoo symbols: ^NSEI NIFTY 50, ^NSEBANK NIFTY BANK, ^BSESN SENSEX, ^INDIAVIX.
+# A stock is RELIANCE.NS on NSE and RELIANCE.BO on BSE. Both exchanges trade 9:15 to 15:30 IST.
+INDIA_INDEXES = (("^NSEI", "NIFTY 50", "NSE"), ("^NSEBANK", "NIFTY BANK", "NSE"), ("^BSESN", "SENSEX", "BSE"),
+                 ("^INDIAVIX", "INDIA VIX", "NSE"))
+INDIA_WATCH = ("RELIANCE", "HDFCBANK", "ICICIBANK", "TCS", "INFY")
+INDIA_MAX = 15
+
+
+def india_names(cfg, plan, folder, override=None):
+    """The stocks for the NSE and BSE table: --india, else config dashboard.india_watch, else a default
+    five; plus the plan's stock and the NSE positions. Bare names: RELIANCE, not RELIANCE.NS."""
+    def bare(x):
+        x = str(x or "").upper().strip()
+        for suf in (".NS", ".BO"):
+            if x.endswith(suf):
+                x = x[:-len(suf)]
+        return x
+    dash_cfg = cfg.get("dashboard") if isinstance(cfg.get("dashboard"), dict) else {}
+    if override:
+        names, source = [n for n in str(override).split(",")], "--india"
+    elif isinstance(dash_cfg.get("india_watch"), list) and dash_cfg["india_watch"]:
+        names, source = dash_cfg["india_watch"], "config"
+    else:
+        names, source = list(INDIA_WATCH), "default"
+    sym = str((plan or {}).get("symbol") or "").upper() if isinstance(plan, dict) else ""
+    if sym and alerts.market_for(sym, plan.get("market")) == "nse" and not sym.startswith("^") and sym not in alerts.NSE_INDEXES:
+        names = [sym] + list(names)
+    pf = read(os.path.join(folder, "trader", "portfolio.nse.json")) or {}
+    names = list(names) + [p.get("ticker") or p.get("symbol") for p in pf.get("positions") or []]
+    out = []
+    for n in names:
+        n = bare(n)
+        if n and not n.startswith("^") and alerts.nse_ticker_ok(n) and n not in out:
+            out.append(n)
+    return out[:INDIA_MAX], source
+
+
+def _q(quote, prices, sym):
+    """One quote as the page wants it, from a live quote or else trader/prices.json."""
+    if quote:
+        p, prev = quote["price"], quote.get("prev_close")
+        out = {"price": p, "prev_close": prev, "high": quote.get("high"), "low": quote.get("low"),
+               "time": quote.get("time"), "source": "live"}
+    elif sym in (prices.get("prices") or {}):
+        d = (prices.get("detail") or {}).get(sym) or {}
+        p, prev = prices["prices"][sym], d.get("prev_close")
+        out = {"price": p, "prev_close": prev, "high": None, "low": None,
+               "time": d.get("time") or prices.get("as_of"), "source": "trader/prices.json"}
+    else:
+        return None
+    out["change"] = round(p - prev, 2) if prev else None
+    out["pct"] = round((p - prev) / prev * 100, 2) if prev else None
+    return out
+
+
+def india(cfg, plan, folder, quotes, prices, override=None):
+    """NIFTY, SENSEX and friends, and NSE vs BSE prices for the chosen stocks."""
+    dash_cfg = cfg.get("dashboard") if isinstance(cfg.get("dashboard"), dict) else {}
+    if dash_cfg.get("india") is False and not override:
+        return None
+    names, source = india_names(cfg, plan, folder, override)
+    syms = [i[0] for i in INDIA_INDEXES] + [n + suf for n in names for suf in (".NS", ".BO")]
+    live = quotes.get(syms, market="nse")
+    indexes = [dict(symbol=s, name=n, exchange=x, quote=_q(live.get(s), prices, s)) for s, n, x in INDIA_INDEXES]
+    stocks = []
+    for n in names:
+        nse, bse = _q(live.get(n + ".NS"), prices, n + ".NS"), _q(live.get(n + ".BO"), prices, n + ".BO")
+        gap = round(nse["price"] - bse["price"], 2) if nse and bse else None
+        stocks.append({"name": n, "nse": nse, "bse": bse, "gap": gap})
+    return {"indexes": indexes, "stocks": stocks, "source": source, "live": quotes.enabled}
 
 
 def clocks():
@@ -107,7 +194,7 @@ def clocks():
         finally:
             alerts.use_market("us")
         out.append({"code": code, "exchange": "NYSE" if code == "us" else "NSE",
-                    "place": "New York" if code == "us" else "India (IST)", "now": st["now_new_york"],
+                    "place": "New York" if code == "us" else "India (IST) · BSE same hours", "now": st["now_new_york"],
                     "date": st["date"], "open": st["open"], "reason": st["reason"], "opens": st.get("opens"),
                     "closes": st.get("closes"), "next_open": st.get("next_open"),
                     "early_close": st.get("early_close")})
@@ -186,7 +273,7 @@ def broker_log(folder):
     return out
 
 
-def state(folder, quotes):
+def state(folder, quotes, india_list=None):
     """Everything the page shows, as one JSON object."""
     t = lambda *p: os.path.join(folder, "trader", *p)
     cfg = read(t("config.json")) or {}
@@ -222,6 +309,7 @@ def state(folder, quotes):
         portfolios = portfolio_rows(folder, q)
         log = broker_log(folder)
         mk = clocks()
+        ind = india(cfg, plan, folder, quotes, prices, india_list)
     plan_out = None
     if isinstance(plan, dict) and plan.get("symbol"):
         sym = str(plan["symbol"]).upper()
@@ -268,6 +356,7 @@ def state(folder, quotes):
                       "created_at": watch.get("created_at"), "count": len(watch.get("hits") or []), "hits": hits}
         if isinstance(watch, dict) else None,
         "quotes": q,
+        "india": ind,
     }
 
 
@@ -279,7 +368,7 @@ def page(snapshot=None):
     return text.replace("/*__SNAPSHOT__*/null", data)
 
 
-def make_handler(folder, quotes):
+def make_handler(folder, quotes, india_list=None):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code, body, ctype):
             data = body.encode("utf-8")
@@ -296,7 +385,7 @@ def make_handler(folder, quotes):
                 self._send(200, page(), "text/html; charset=utf-8")
             elif path == "/api/state":
                 try:
-                    self._send(200, json.dumps(state(folder, quotes)), "application/json")
+                    self._send(200, json.dumps(state(folder, quotes, india_list)), "application/json")
                 except Exception as e:            # show the problem on the page, keep serving
                     self._send(500, json.dumps({"error": "%s: %s" % (type(e).__name__, e)}), "application/json")
             else:
@@ -318,6 +407,8 @@ def main(argv=None):
         p.add_argument("--no-quotes", action="store_true", help="no live quotes: trader/prices.json only")
         if name == "serve":
             p.add_argument("--port", type=int, default=8765)
+        p.add_argument("--india", metavar="RELIANCE,TCS", help="the stocks for the NSE and BSE table "
+                       "(default: config dashboard.india_watch, else five large ones)")
         if name == "snapshot":
             p.add_argument("--out", default="trader/dashboard.html")
     a = ap.parse_args(argv)
@@ -330,15 +421,15 @@ def main(argv=None):
         return 1
     quotes = Quotes(not a.no_quotes)
     if a.cmd == "state":
-        print(json.dumps(state(a.folder, quotes), indent=2))
+        print(json.dumps(state(a.folder, quotes, a.india), indent=2))
         return 0
     if a.cmd == "snapshot":
         out = a.out if os.path.isabs(a.out) else os.path.join(a.folder, a.out)
         with open(out, "w", encoding="utf-8") as fh:
-            fh.write(page(state(a.folder, quotes)))
+            fh.write(page(state(a.folder, quotes, a.india)))
         print("Wrote %s. Open it in a browser; it shows the data as of now and does not refresh." % out)
         return 0
-    server = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.folder, quotes))
+    server = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(a.folder, quotes, a.india))
     print("Trader dashboard on http://127.0.0.1:%d (read only, refreshes every 15 s). Ctrl+C stops it." % a.port)
     print("Reading %s" % html.escape(os.path.abspath(os.path.join(a.folder, "trader"))), flush=True)
     try:

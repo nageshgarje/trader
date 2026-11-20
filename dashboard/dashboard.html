@@ -78,6 +78,13 @@ tr:last-child td { border-bottom: 0; }
 .err { color: var(--red); font-size: 12px; }
 details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 pre { margin: 6px 0 0; padding: 8px; background: var(--soft); border-radius: 6px; overflow-x: auto; font: 12px/1.4 var(--mono); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile .big { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.range { position: relative; height: 4px; border-radius: 2px; background: var(--soft); margin: 8px 0 2px; }
+.range i { position: absolute; top: -3px; width: 2px; height: 10px; background: var(--ink); }
+@media (max-width: 900px) { .wide { display: none; } }
+.up { color: var(--green); } .down { color: var(--red); }
 .foot { grid-column: span 12; color: var(--muted); font-size: 12px; text-align: center; padding-top: 4px; }
 button.theme { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; }
 </style>
@@ -92,6 +99,7 @@ button.theme { background: none; border: 1px solid var(--line); color: var(--mut
 </header>
 <main>
   <section class="card s12"><h2>Markets</h2><div class="clocks" id="clocks"></div></section>
+  <section class="card s12" id="india-card"><h2>India: NSE · BSE <small id="india-meta"></small></h2><div id="india"></div></section>
   <section class="card s7"><h2>Trade plan <small id="plan-meta"></small></h2><div id="plan"></div></section>
   <section class="card s5"><h2>Time Machine <small id="tm-meta"></small></h2><div id="tm"></div></section>
   <section class="card s12"><h2>Orders <small id="orders-meta"></small></h2><div id="orders"></div></section>
@@ -238,6 +246,43 @@ function renderPositions(ps) {
     </div>`).join("");
 }
 
+function chg(q, pts) {
+  if (!q || q.change == null) return `<span class="sub">–</span>`;
+  const c = q.change >= 0 ? "up" : "down", sg = q.change >= 0 ? "+" : "-";
+  return `<span class="${c}">${sg}${money(Math.abs(q.change), "nse", pts)} (${sg}${Math.abs(q.pct).toFixed(2)}%)</span>`;
+}
+function dayRange(q, pts) {
+  if (!q || q.high == null || q.low == null || q.high <= q.low) return "";
+  const at = Math.min(100, Math.max(0, (q.price - q.low) / (q.high - q.low) * 100)).toFixed(1);
+  return `<div class="range" title="day's range"><i style="left:${at}%"></i></div>
+    <div class="sub" style="display:flex;justify-content:space-between"><span>${money(q.low, "nse", pts)}</span><span>${money(q.high, "nse", pts)}</span></div>`;
+}
+function renderIndia(d) {
+  if (!d) { $("india-card").style.display = "none"; return; }
+  $("india-card").style.display = "";
+  const t = d.indexes.concat(d.stocks.flatMap((s) => [s.nse, s.bse])).map((q) => q && q.time).filter(Boolean).sort().pop();
+  $("india-meta").textContent = (d.live ? "delayed Yahoo quotes" : "no live quotes (--no-quotes)") + (t ? " · " + since(t) : "");
+  const tiles = d.indexes.map((i) => {
+    const q = i.quote, vix = i.symbol === "^INDIAVIX";
+    return `<div class="tile"><div><strong>${esc(i.name)}</strong> <span class="sub">${esc(i.exchange)}</span></div>
+      <div class="big">${q ? money(q.price, "nse", true) : "–"}</div>
+      <div>${vix && q && q.change != null ? `<span class="sub">${q.change >= 0 ? "+" : ""}${q.change.toFixed(2)} (${q.pct.toFixed(2)}%)${q.price >= 20 ? " · jumpy" : ""}</span>` : chg(q, true)}</div>
+      ${dayRange(q, true)}</div>`;
+  }).join("");
+  const rows = d.stocks.map((s) => {
+    const n = s.nse, b = s.bse, last = n || b;
+    return `<tr><td><strong>${esc(s.name)}</strong></td>
+      <td class="num">${n ? money(n.price, "nse") : "–"}</td>
+      <td class="num">${b ? money(b.price, "nse") : "–"}</td>
+      <td class="num">${chg(last)}</td>
+      <td class="num sub wide">${last && last.low != null ? money(last.low, "nse") + " – " + money(last.high, "nse") : "–"}</td>
+      <td class="num sub" title="NSE price minus BSE price; delayed quotes can be seconds apart">${s.gap == null ? "–" : (s.gap > 0 ? "+" : s.gap < 0 ? "-" : "") + money(Math.abs(s.gap), "nse")}</td></tr>`;
+  }).join("");
+  $("india").innerHTML = `<div class="tiles">${tiles}</div>
+    ${d.stocks.length ? `<div class="scroll"><table><tr><th>Stock</th><th class="num">NSE</th><th class="num">BSE</th><th class="num">Today (NSE)</th><th class="num wide">Day range</th><th class="num">NSE − BSE</th></tr>${rows}</table></div>` : ""}
+    <p class="note">Stocks from ${d.source === "config" ? "your config (dashboard.india_watch)" : d.source === "--india" ? "--india" : "the default list; set dashboard.india_watch in trader/config.json to choose"}, plus your plan and NSE positions. The skills trade on NSE; BSE is shown for comparison. The two quotes can be seconds apart, so a small gap is not a free trade.</p>`;
+}
+
 function renderLog(l) {
   if (!l.length) { $("log").innerHTML = `<div class="empty">No decisions recorded today.</div>`; return; }
   const kind = {placed: "green", approved: "blue", declined: "grey", denied: "grey", failed: "red", filled: "green"};
@@ -265,7 +310,7 @@ function render(s) {
   $("folder").textContent = s.folder + "/trader";
   $("acct").innerHTML = s.paper ? badge("PAPER", "blue") : badge("LIVE: real money", "red");
   $("updated").textContent = SNAPSHOT ? `Snapshot of ${new Date(s.generated_at).toLocaleString()}` : `Updated ${new Date().toLocaleTimeString()} · every 15 s`;
-  renderClocks(s.markets); renderPlan(s.plan, s.timemachine); renderTM(s.timemachine);
+  renderClocks(s.markets); renderIndia(s.india); renderPlan(s.plan, s.timemachine); renderTM(s.timemachine);
   renderOrders(s.orders, s.risk, s.orders_market); renderAlerts(s.alerts); renderPositions(s.portfolios);
   renderLog(s.log); renderScan(s.watchlist);
 }
