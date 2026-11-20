@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trader Dashboard</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5d6673; --line: #e3e6eb; --soft: #eef1f5;
+  --green: #137a43; --green-bg: #e3f4ea; --red: #b42318; --red-bg: #fde8e6; --amber: #925f00; --amber-bg: #fdf1d8;
+  --blue: #1f5fbf; --blue-bg: #e5eefb; --grey-bg: #eceff3;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216; --panel: #171b21; --ink: #e8ebf0; --muted: #98a2b0; --line: #262c35; --soft: #1e232b;
+    --green: #4cc38a; --green-bg: #12301f; --red: #f2766b; --red-bg: #3a1714; --amber: #e7b453; --amber-bg: #33270c;
+    --blue: #7aa7f0; --blue-bg: #14233c; --grey-bg: #232933;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --panel: #171b21; --ink: #e8ebf0; --muted: #98a2b0; --line: #262c35; --soft: #1e232b;
+  --green: #4cc38a; --green-bg: #12301f; --red: #f2766b; --red-bg: #3a1714; --amber: #e7b453; --amber-bg: #33270c;
+  --blue: #7aa7f0; --blue-bg: #14233c; --grey-bg: #232933;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between;
+  padding: 16px 20px 8px; max-width: 1280px; margin: 0 auto; }
+h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 12px; }
+main { max-width: 1280px; margin: 0 auto; padding: 8px 20px 32px; display: grid; gap: 14px;
+  grid-template-columns: repeat(12, 1fr); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px;
+  display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card h2 small { text-transform: none; letter-spacing: 0; font-weight: normal; }
+.s12 { grid-column: span 12; } .s8 { grid-column: span 8; } .s7 { grid-column: span 7; } .s6 { grid-column: span 6; }
+.s5 { grid-column: span 5; } .s4 { grid-column: span 4; }
+@media (max-width: 960px) { .s8, .s7, .s6, .s5, .s4 { grid-column: span 12; } }
+@media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.b-green { background: var(--green-bg); color: var(--green); } .b-red { background: var(--red-bg); color: var(--red); }
+.b-amber { background: var(--amber-bg); color: var(--amber); } .b-blue { background: var(--blue-bg); color: var(--blue); }
+.b-grey { background: var(--grey-bg); color: var(--muted); }
+.clocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.clock { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.clock .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+.scroll { overflow-x: auto; }
+.empty { color: var(--muted); padding: 6px 0; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.ladder { position: relative; height: 54px; margin: 14px 4px 6px; }
+.ladder .track { position: absolute; left: 0; right: 0; top: 24px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--red-bg), var(--soft) 50%, var(--green-bg)); }
+.ladder .mark { position: absolute; top: 14px; width: 2px; height: 26px; background: var(--muted); }
+.ladder .lab { position: absolute; top: 42px; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+@media (max-width: 600px) { .ladder .lp { display: none; } }
+.ladder .now { position: absolute; top: 0; transform: translateX(-50%); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.ladder .dot { position: absolute; top: 20px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%;
+  border: 2px solid var(--panel); background: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+.odds { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin: 6px 0 8px; }
+.odds div { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; min-width: 0; overflow: hidden; }
+.o-t { background: var(--green-bg); color: var(--green); } .o-s { background: var(--red-bg); color: var(--red); }
+.o-n { background: var(--grey-bg); color: var(--muted); }
+.hist { display: flex; align-items: flex-end; gap: 2px; height: 56px; margin-top: 8px; }
+.hist div { flex: 1; background: var(--blue-bg); border-top: 2px solid var(--blue); min-height: 1px; }
+.verdict { font-weight: 600; margin: 4px 0; }
+.note { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+.warn { color: var(--amber); font-size: 12px; }
+.err { color: var(--red); font-size: 12px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+pre { margin: 6px 0 0; padding: 8px; background: var(--soft); border-radius: 6px; overflow-x: auto; font: 12px/1.4 var(--mono); }
+.foot { grid-column: span 12; color: var(--muted); font-size: 12px; text-align: center; padding-top: 4px; }
+button.theme { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Trader Dashboard <span id="acct"></span></h1>
+    <div class="sub" id="folder">Loading…</div>
+  </div>
+  <div class="sub"><span id="updated"></span> <button class="theme" id="theme" title="Switch light / dark">Theme</button></div>
+</header>
+<main>
+  <section class="card s12"><h2>Markets</h2><div class="clocks" id="clocks"></div></section>
+  <section class="card s7"><h2>Trade plan <small id="plan-meta"></small></h2><div id="plan"></div></section>
+  <section class="card s5"><h2>Time Machine <small id="tm-meta"></small></h2><div id="tm"></div></section>
+  <section class="card s12"><h2>Orders <small id="orders-meta"></small></h2><div id="orders"></div></section>
+  <section class="card s6"><h2>Alerts</h2><div id="alerts"></div></section>
+  <section class="card s6"><h2>Positions and cash</h2><div id="positions"></div></section>
+  <section class="card s6"><h2>Today's decisions</h2><div id="log"></div></section>
+  <section class="card s6"><h2>Latest scan <small id="scan-meta"></small></h2><div id="scan"></div></section>
+  <div class="foot">Read only: this page never places, approves or changes anything. Quotes are free, delayed and unofficial; your broker's price is the one that fills. Education and tooling, not financial advice.</div>
+</main>
+<script>
+const SNAPSHOT = /*__SNAPSHOT__*/null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const cur = (market, points) => points ? "" : (market === "nse" ? "₹" : "$");
+const isIndex = (s) => String(s || "").startsWith("^");
+function money(v, market, points) {
+  if (v == null || isNaN(v)) return "–";
+  const n = Number(v), sign = n < 0 ? "-" : "";
+  const loc = market === "nse" ? "en-IN" : "en-US";
+  return sign + cur(market, points) + Math.abs(n).toLocaleString(loc, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+const pct = (v, d = 1) => v == null ? "–" : (Number(v) * 100).toFixed(d) + "%";
+function badge(text, kind) { return `<span class="badge b-${kind}">${esc(text)}</span>`; }
+function since(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (isNaN(s)) return "";
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + " min ago";
+  if (s < 172800) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
+}
+
+function renderClocks(ms) {
+  $("clocks").innerHTML = ms.map((m) => `
+    <div class="clock">
+      <div>
+        <div><strong>${esc(m.exchange)}</strong> <span class="sub">${esc(m.place)}</span></div>
+        <div class="big">${esc((m.now || "").slice(11))}</div>
+        <div class="sub">${esc(m.date)}${m.opens ? ` · session ${esc(m.opens)}–${esc(m.closes)}` : ""}${m.early_close ? " · early close" : ""}</div>
+      </div>
+      <div style="text-align:right">${m.open ? badge("OPEN", "green") : badge("CLOSED", "grey")}
+        <div class="sub">${esc(m.reason)}</div>${!m.open && m.next_open ? `<div class="sub">next open ${esc(m.next_open)}</div>` : ""}</div>
+    </div>`).join("");
+}
+
+function renderPlan(p, tm) {
+  if (!p) { $("plan").innerHTML = `<div class="empty">No plan yet. /trader-entry, then /trader-exit writes trader/plan.json.</div>`; $("plan-meta").textContent = ""; return; }
+  const mk = p.market, pts = isIndex(p.symbol), q = p.quote;
+  $("plan-meta").textContent = `${p.symbol} · ${p.date}${p.entry_time ? " · entry " + p.entry_time : ""}`;
+  const lo = Math.min(p.stop, q ? q.price : p.stop), hi = Math.max(p.target, q ? q.price : p.target);
+  const pad = (hi - lo) * 0.08 || 1, a = lo - pad, b = hi + pad;
+  const x = (v) => ((v - a) / (b - a) * 100).toFixed(2) + "%";
+  let where = "", kind = "grey";
+  if (q) {
+    if (q.price <= p.stop) { where = "at or below the stop"; kind = "red"; }
+    else if (q.price >= p.target) { where = "at or above the target"; kind = "green"; }
+    else { const r = (q.price - p.entry) / (p.entry - p.stop); where = (r >= 0 ? "+" : "") + r.toFixed(2) + "R from the entry"; kind = r >= 0 ? "blue" : "amber"; }
+  }
+  $("plan").innerHTML = `
+    <div class="ladder">
+      <div class="track"></div>
+      ${[["stop", p.stop], ["entry", p.entry], ["target", p.target]].map(([n, v]) =>
+        `<div class="mark" style="left:${x(v)}"></div><div class="lab" style="left:${x(v)}">${n}<span class="lp"> ${money(v, mk, pts)}</span></div>`).join("")}
+      ${q ? `<div class="dot" style="left:${x(q.price)}"></div><div class="now" style="left:${x(q.price)}">${money(q.price, mk, pts)}</div>` : ""}
+    </div>
+    <div style="margin:8px 0">${q ? badge(where, kind) + ` <span class="sub">last ${money(q.price, mk, pts)} · ${esc(q.source === "live" ? "live Yahoo quote" : "from trader/prices.json")} ${esc(since(q.time))}</span>` : `<span class="sub">no price yet (trader-alerts: alerts.py quote ${esc(p.symbol)} --write)</span>`}</div>
+    <dl class="kv">
+      <dt>Stop</dt><dd>${money(p.stop, mk, pts)} <span class="sub">${esc(p.stop_label || "")}</span></dd>
+      <dt>Target</dt><dd>${money(p.target, mk, pts)} <span class="sub">${esc(p.target_label || "")}</span></dd>
+      <dt>Risk a share</dt><dd>${money(p.risk_per_share, mk, pts)} · reward:risk ${p.reward_risk != null ? Number(p.reward_risk).toFixed(2) : "–"}</dd>
+      <dt>Flat by</dt><dd>${esc(p.flat_by || "–")} ${mk === "nse" ? "IST" : "ET"}, win or lose</dd>
+    </dl>
+    ${pts ? `<p class="warn">${esc(p.symbol)} is an index: it cannot be bought. Trade NIFTYBEES.NS or a future.</p>` : ""}
+    <p class="note">A stop is a plan, not a guarantee: a gap or a fast market can fill past it.</p>`;
+}
+
+function renderTM(t) {
+  if (!t) { $("tm").innerHTML = `<div class="empty">No replay yet. /trader-timemachine run --write.</div>`; $("tm-meta").textContent = ""; return; }
+  $("tm-meta").textContent = `${t.symbol} · ${t.date} · seed ${t.seed}`;
+  const w = (v) => Math.max(0, (v || 0) * 100).toFixed(1) + "%";
+  const h = t.hist && t.hist.bins ? t.hist.bins : [], mx = Math.max(1, ...h);
+  const hs = t.history || {};
+  const pts = isIndex(t.symbol);
+  $("tm").innerHTML = `
+    <div class="verdict">${esc(t.verdict)}</div>
+    ${(t.notes || []).map((n) => `<div class="note">${esc(n)}</div>`).join("")}
+    <div class="odds">
+      <div class="o-t" style="width:${w(t.p_target)}">${pct(t.p_target)}</div>
+      <div class="o-n" style="width:${w(t.p_neither)}">${pct(t.p_neither)}</div>
+      <div class="o-s" style="width:${w(t.p_stop)}">${pct(t.p_stop)}</div>
+    </div>
+    <div class="sub">target first · neither by ${esc(t.until)} · stop first, over ${Number(t.replays || 0).toLocaleString()} replays</div>
+    <div class="hist" title="Price at ${esc(t.until)} across the replays">${h.map((v) => `<div style="height:${(v / mx * 100).toFixed(1)}%"></div>`).join("")}</div>
+    <dl class="kv" style="margin-top:8px">
+      <dt>Price at ${esc(t.until)}</dt><dd>median ${money(t.median, t.market, pts)}, 90% between ${money(t.p5, t.market, pts)} and ${money(t.p95, t.market, pts)}</dd>
+      <dt>Average R</dt><dd>${t.avg_R != null ? (t.avg_R >= 0 ? "+" : "") + Number(t.avg_R).toFixed(3) : "–"}</dd>
+      <dt>History</dt><dd>${hs.triggered != null ? `fired ${hs.triggered} of ${hs.sessions} sessions: ${hs.target} target, ${hs.stop} stop, ${hs.close} neither` : "–"}</dd>
+    </dl>
+    <p class="note">A simulation from the last ${esc(t.sessions)} sessions, not a prediction.</p>`;
+}
+
+function renderOrders(os, risk, mk) {
+  $("orders-meta").textContent = risk ? `risk check ${since(risk.checked_at)} · ${risk.pass} passed, ${risk.block} blocked` : "";
+  if (!os.length) { $("orders").innerHTML = `<div class="empty">No proposed orders. /trader-budget --write writes them.</div>`; return; }
+  const st = (o) => o.ready ? badge("READY", "green") : /^BLOCKED/.test(o.status) ? badge("BLOCKED", "red")
+    : /^WAITING/.test(o.status) ? badge("WAITING", "amber") : /^(DONE|APPROVED)/.test(o.status) ? badge(o.status.split(":")[0], "blue") : badge("NOT READY", "grey");
+  $("orders").innerHTML = `<div class="scroll"><table>
+    <tr><th>#</th><th>Order</th><th>Risk</th><th>Status</th></tr>
+    ${os.map((o) => `<tr>
+      <td>${o.index}</td>
+      <td>${esc(o.plain)}${o.why ? `<div class="sub">${esc(o.why)}</div>` : ""}
+        ${o.reasons.length ? o.reasons.map((r) => `<div class="err">${esc(r)}</div>`).join("") : ""}
+        ${o.warnings.length ? o.warnings.map((r) => `<div class="warn">${esc(r)}</div>`).join("") : ""}
+        <details><summary>${esc(o.tool)} arguments</summary><pre>${esc(JSON.stringify(o.tool_input, null, 2))}</pre></details></td>
+      <td>${o.verdict ? badge(o.verdict, o.verdict === "PASS" ? "green" : "red") : badge("unchecked", "grey")}</td>
+      <td>${st(o)}<div class="sub">${esc(o.status)}</div></td></tr>`).join("")}
+  </table></div>
+  ${risk && risk.warnings.length ? risk.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join("") : ""}
+  <p class="note">A yes covers one order at a time, in the chat, through /trader-broker.${mk === "nse" ? " NSE: the SL-M stop goes in only after its buy fills." : ""}</p>`;
+}
+
+function renderAlerts(rs) {
+  if (!rs.length) { $("alerts").innerHTML = `<div class="empty">No alerts. /trader-alerts add --from-plan.</div>`; return; }
+  const what = (r) => r.type === "time" ? `at ${esc(r.at)}` : r.type === "pct_move" ? `moves ${esc(r.pct)}%` :
+    r.type === "opening_bell" ? "opening bell" : `${esc(r.type)} ${money(r.price, r.market, isIndex(r.symbol))}`;
+  $("alerts").innerHTML = `<div class="scroll"><table><tr><th>Symbol</th><th>Rule</th><th>Day</th><th>State</th></tr>
+    ${rs.map((r) => `<tr><td>${esc(r.symbol || "market")} <span class="sub">${r.market.toUpperCase()}</span></td>
+      <td>${what(r)}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}</td><td class="sub">${esc(r.date || "every day")}</td>
+      <td>${r.rung ? badge("RANG", "amber") + `<div class="sub">${esc(since(r.rung))}</div>` : badge("watching", "grey")}</td></tr>`).join("")}
+  </table></div>`;
+}
+
+function renderPositions(ps) {
+  if (!ps.length) { $("positions").innerHTML = `<div class="empty">No account files yet (trader/portfolio.json, trader/portfolio.nse.json). A fill recorded by /trader-broker starts one.</div>`; return; }
+  $("positions").innerHTML = ps.map((p) => `
+    <div style="margin-bottom:10px"><strong>${p.market === "nse" ? "NSE" : "US"}</strong> <span class="sub">${esc(p.file)}</span>
+      <div style="margin:4px 0">Cash <strong>${money(p.cash, p.market)}</strong></div>
+      ${p.positions.length ? `<div class="scroll"><table><tr><th>Symbol</th><th class="num">Shares</th><th class="num">Last</th><th class="num">Value</th><th class="num">P&amp;L</th></tr>
+        ${p.positions.map((x) => `<tr><td>${esc(x.symbol)}</td><td class="num">${x.shares}</td>
+          <td class="num">${money(x.last, p.market)}</td><td class="num" title="cost ${money(x.cost, p.market)}">${money(x.value, p.market)}</td>
+          <td class="num" style="color:${x.pnl == null ? "inherit" : x.pnl >= 0 ? "var(--green)" : "var(--red)"}">${x.pnl == null ? "–" : (x.pnl >= 0 ? "+" : "") + money(x.pnl, p.market)}</td></tr>`).join("")}
+      </table></div>` : `<div class="sub">No open positions.</div>`}
+    </div>`).join("");
+}
+
+function renderLog(l) {
+  if (!l.length) { $("log").innerHTML = `<div class="empty">No decisions recorded today.</div>`; return; }
+  const kind = {placed: "green", approved: "blue", declined: "grey", denied: "grey", failed: "red", filled: "green"};
+  $("log").innerHTML = `<div class="scroll"><table><tr><th>Time</th><th>What</th><th>Status</th></tr>
+    ${l.map((r) => `<tr><td class="sub" style="white-space:nowrap">${esc((r.at || "").slice(11, 16))} ${r.market === "nse" ? "IST" : "ET"}</td>
+      <td>${esc(r.plain)}${r.reply ? `<div class="sub">reply “${esc(r.reply)}”</div>` : ""}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}</td>
+      <td>${badge(r.status, kind[r.status] || "grey")}</td></tr>`).join("")}
+  </table></div>`;
+}
+
+function renderScan(w) {
+  if (!w) { $("scan").innerHTML = `<div class="empty">No scan yet. /trader-scanner orb or daily writes trader/watchlist.json.</div>`; $("scan-meta").textContent = ""; return; }
+  $("scan-meta").textContent = `${w.mode || ""} · ${(w.market || "us").toUpperCase()} · ${w.count} hits · ${since(w.created_at)}`;
+  if (!w.hits.length) { $("scan").innerHTML = `<div class="empty">The last scan found nothing.</div>`; return; }
+  const orb = w.hits[0].or_high != null;
+  $("scan").innerHTML = `<div class="scroll"><table><tr><th>Symbol</th><th class="num">Price</th>${orb ? `<th>Closed above at</th><th class="num">Over the range</th>` : `<th>Setups</th><th class="num">RSI</th>`}</tr>
+    ${w.hits.map((h) => `<tr${orb ? ` title="opening range ${Number(h.or_low).toFixed(2)} to ${Number(h.or_high).toFixed(2)}"` : ""}><td>${esc(h.symbol)}</td><td class="num">${money(h.price, w.market, isIndex(h.symbol))}</td>
+      ${orb ? `<td class="sub" style="white-space:nowrap">${esc(h.at || "")}</td><td class="num">+${Number(h.pct_over).toFixed(2)}%</td>`
+            : `<td class="sub">${esc((h.setups || []).join(", "))}</td><td class="num">${h.rsi ?? "–"}</td>`}</tr>`).join("")}
+  </table></div><p class="note">A scan is a list of charts that match a rule, not a list of stocks to buy.</p>`;
+}
+
+function render(s) {
+  if (s.error) { $("folder").innerHTML = `<span class="err">${esc(s.error)}</span>`; return; }
+  $("folder").textContent = s.folder + "/trader";
+  $("acct").innerHTML = s.paper ? badge("PAPER", "blue") : badge("LIVE: real money", "red");
+  $("updated").textContent = SNAPSHOT ? `Snapshot of ${new Date(s.generated_at).toLocaleString()}` : `Updated ${new Date().toLocaleTimeString()} · every 15 s`;
+  renderClocks(s.markets); renderPlan(s.plan, s.timemachine); renderTM(s.timemachine);
+  renderOrders(s.orders, s.risk, s.orders_market); renderAlerts(s.alerts); renderPositions(s.portfolios);
+  renderLog(s.log); renderScan(s.watchlist);
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", {cache: "no-store"});
+    render(await r.json());
+  } catch (e) {
+    $("updated").innerHTML = `<span class="err">Cannot reach the dashboard server (${esc(e.message)}). Is dashboard.py serve still running?</span>`;
+  }
+}
+
+(function theme() {
+  let t = null;
+  try { t = localStorage.getItem("trader-theme"); } catch (e) {}
+  if (t) document.documentElement.dataset.theme = t;
+  $("theme").onclick = () => {
+    const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("trader-theme", next); } catch (e) {}
+  };
+})();
+
+if (SNAPSHOT) { render(SNAPSHOT); } else { refresh(); setInterval(refresh, 15000); }
+</script>
+</body>
+</html>

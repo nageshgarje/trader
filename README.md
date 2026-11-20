@@ -163,6 +163,34 @@ What changes for NSE:
 - **Indexes**: NIFTY and BANKNIFTY work for signals and prints in points, but an
   index cannot be bought: trade NIFTYBEES.NS or a future.
 
+## The dashboard
+
+One page that shows everything the skills wrote to `trader/`, for the US and
+NSE side by side, refreshed every 15 seconds:
+
+```bash
+python3 dashboard/dashboard.py serve        # then open http://127.0.0.1:8765
+python3 dashboard/dashboard.py snapshot     # or one static page: trader/dashboard.html
+```
+
+It shows:
+
+- the NYSE and NSE clocks
+- the trade plan, with the latest price on a stop, entry and target ladder
+- the Time Machine's odds and verdict
+- every proposed order, with trader-risk's verdict and trader-broker's status
+  (READY, WAITING, DONE)
+- the alerts and which have rung
+- cash and positions per market with P&L
+- today's decisions
+- the latest scan
+
+It is read only: it listens on 127.0.0.1, has no way to approve or place
+anything, and never writes a file. Quotes are delayed Yahoo prices for the
+plan, the orders and the positions, at most every 30 seconds (`--no-quotes`
+uses `trader/prices.json` only). Run it from the project folder that holds
+`trader/`, or pass `--folder`.
+
 ## The tools
 
 All standard-library Python. The data tools read public endpoints and are
@@ -253,6 +281,7 @@ trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
 trader-pelosi/      SKILL.md, ptr.py
+dashboard/          dashboard.py, dashboard.html (the read-only dashboard)
 tests/              unittest suite + offline fixtures
 ```
 
