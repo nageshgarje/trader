@@ -11,8 +11,9 @@ description: >-
   places an order. Use when the user says "tell me when to get in", "watch
   TSLA", "has it broken out", "did it break the opening range", "entry
   signal", "time my entry", "check my watchlist", or after /trader-scanner
-  and /trader-news, before /trader-exit.
-argument-hint: "[TICKER] [--setup orb|level] [--interval 5m|1m]"
+  and /trader-news, before /trader-exit. Works for US stocks and for India's
+  NSE (NIFTY, BANKNIFTY, RELIANCE.NS and other .NS stocks, IST hours).
+argument-hint: "[TICKER] [--setup orb|level] [--interval 5m|1m] [--market us|nse]"
 ---
 
 # trader-entry
@@ -72,6 +73,38 @@ day bar by bar without waiting.
 - **What it says.** Waiting (and how far the last close is from the level),
   triggered, expired, or no data. Before 9:30: not open yet. Before 9:45: the
   range is still forming. Weekends and NYSE holidays: the market is closed.
+
+## India: NSE (NIFTY, RELIANCE and other NSE stocks)
+
+The same rule runs on the National Stock Exchange of India. An NSE ticker
+picks it by itself: `RELIANCE.NS`, `NIFTY` (Yahoo's `^NSEI`), `BANKNIFTY`
+(`^NSEBANK`). A bare `RELIANCE` needs `--market nse`, or `"market": "nse"` in
+`trader/config.json`.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/entry.py" check RELIANCE.NS --write
+python3 "${CLAUDE_SKILL_DIR}/entry.py" check RELIANCE --market nse
+python3 "${CLAUDE_SKILL_DIR}/entry.py" watch NIFTY --until 15:00
+```
+
+- **The clock** is IST (UTC+5:30, no daylight saving). The session is 9:15 to
+  15:30, so the 15-minute range is 9:15 to 9:30. Times you pass (`--now`,
+  `--until`) are IST.
+- **The window** is no entries before 9:30 or after 15:00 by default. Brokers
+  square off intraday positions from about 15:15. The top-level times in
+  `trader/config.json` are US times and are ignored here. Set NSE's own in an
+  `"nse"` block: `{"nse": {"no_entries_after": "14:30"}}`.
+- **Holidays** come from NSE circular NSE/CMTR/71775 (2026). Indian holidays
+  follow the lunar calendar, so other years cannot be worked out: for those
+  it says to check nseindia.com. Muhurat trading (Diwali, a Sunday) is not
+  covered.
+- **Prices** print in rupees (₹). NIFTY and other indexes print in points, and
+  they have no volume on Yahoo, so `--min-volume-x` is refused for them. An
+  index cannot be bought: watch it for the signal, and trade NIFTYBEES.NS or
+  a future.
+- Only `/trader-entry` and `/trader-exit` know NSE so far. The scanner, the
+  Time Machine, budget, risk, alerts and the broker (Alpaca is US only) still
+  assume the US market.
 
 ## Steps
 

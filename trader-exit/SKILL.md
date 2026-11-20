@@ -11,8 +11,10 @@ description: >-
   Budget Manager and Price Alerts. Long side only. Use when the user says
   "where's my stop", "set my stop and target", "plan the exit", "when do I get
   out", "stop loss", "what's my R", "risk reward", or right after
-  /trader-entry triggers, before /trader-timemachine.
-argument-hint: "[--stop or-mid|or-low|price:X|pct:X|atr:K] [--target 2R|1R|price:X]"
+  /trader-entry triggers, before /trader-timemachine. Works for US stocks and
+  for India's NSE (RELIANCE.NS and other .NS stocks: rupees, NSE tick sizes,
+  flat by 15:15 IST).
+argument-hint: "[--stop or-mid|or-low|price:X|pct:X|atr:K] [--target 2R|1R|price:X] [--market us|nse]"
 ---
 
 # trader-exit
@@ -69,6 +71,27 @@ A level setup has no opening range to lean on, so it needs a stop you name.
 - **Flat by.** 15:55 by default (or `flat_by` in the config). Out by then,
   win or lose, no overnight hold. On a 1:00 p.m. early close it moves up to
   12:55. An entry at or after the flat-by time is refused.
+
+## India: NSE
+
+An NSE plan (from an NSE entry.json, an `.NS` or NIFTY symbol, or `--market
+nse`) changes four things:
+
+- **Ticks.** The stop rounds down and the target rounds to NSE's tick for the
+  price band (circular NSE/CMTR/67133): ₹0.01 under ₹250, ₹0.05 to ₹1,000,
+  ₹0.10 to ₹5,000, ₹0.50 to ₹10,000, ₹1 to ₹20,000, ₹5 above. NSE reviews
+  each stock's tick monthly, so check your broker's.
+- **Flat by** defaults to 15:15 IST, before the broker's intraday square-off.
+  Set it in an `"nse"` block in `trader/config.json`
+  (`{"nse": {"flat_by": "15:10"}}`). The top-level `flat_by` is the US one.
+- **Rupees.** Prices print in ₹ and the plan records `"market": "nse"`.
+- **Indexes.** A NIFTY plan prints in points and warns that an index cannot
+  be bought. Plan the trade itself on NIFTYBEES.NS or the future.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --stop or-mid --target 2R --write     # after entry.py check RELIANCE.NS --write
+python3 "${CLAUDE_SKILL_DIR}/exit.py" plan --symbol RELIANCE.NS --entry 1368.40 --or-high 1366.70 --or-low 1355.20
+```
 
 ## Steps
 
