@@ -98,8 +98,11 @@ on these holidays, from nyse.com/markets/hours-calendars (read 2026-10-13):
   Dec 24 (Christmas observed). Early close 1:00 p.m. on Nov 26.
 
 Daylight saving time is worked out in the tool, so it needs no time zone
-files and ignores the computer's own zone. For any other year it says the
-holiday list is unknown.
+files and ignores the computer's own zone. From 2028 on it works the
+holidays and early closes out from NYSE's standing rules (the third Monday
+of January, Good Friday, observed dates and so on). Those rules cannot know
+a special closure, such as a national day of mourning, so for those years it
+says to check nyse.com.
 
 ## Steps
 

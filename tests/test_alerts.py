@@ -44,8 +44,9 @@ def plan_rules():
 
 class Calendar(unittest.TestCase):
     def test_holidays_match_the_published_list(self):
-        self.assertEqual(sorted(alerts.NYSE_HOLIDAYS), NYSE_2026 + NYSE_2027)
-        self.assertEqual(sorted(alerts.NYSE_EARLY_CLOSE), EARLY)
+        published = lambda table: sorted(d for d in table if d[:4] in ("2026", "2027"))
+        self.assertEqual(published(alerts.NYSE_HOLIDAYS), NYSE_2026 + NYSE_2027)
+        self.assertEqual(published(alerts.NYSE_EARLY_CLOSE), EARLY)
         for d in list(alerts.NYSE_HOLIDAYS) + list(alerts.NYSE_EARLY_CLOSE):
             self.assertLess(datetime.date.fromisoformat(d).weekday(), 5, d)
 

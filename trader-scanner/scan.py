@@ -121,6 +121,56 @@ NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET
     "2027-11-26": "day after Thanksgiving",
 }
 CALENDAR_YEARS = (2026, 2027)
+
+
+def nyse_rules(year):
+    """NYSE's standing holiday and 1:00 p.m. early-close rules for one year, as two
+    {"YYYY-MM-DD": name} dicts. Fills the years after CALENDAR_YEARS (the published list).
+    It cannot know a special closure (a national day of mourning, a storm)."""
+    D, td = datetime.date, datetime.timedelta
+
+    def nth(month, weekday, n):          # the n-th weekday of the month; n = -1 is the last
+        if n > 0:
+            first = D(year, month, 1)
+            return first + td(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+        last = D(year + month // 12, month % 12 + 1, 1) - td(days=1)
+        return last - td(days=(last.weekday() - weekday) % 7)
+
+    def observed(day, name):             # Saturday -> Friday before, Sunday -> Monday after
+        shift = {5: -1, 6: 1}.get(day.weekday(), 0)
+        return day + td(days=shift), name + (" (observed)" if shift else "")
+
+    a, b, c = year % 19, year // 100, year % 100   # Easter Sunday, Gregorian computus
+    h = (19 * a + b - b // 4 - (b - (b + 8) // 25 + 1) // 3 + 15) % 30
+    l = (32 + 2 * (b % 4) + 2 * (c // 4) - h - c % 4) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    easter = D(year, (h + l - 7 * m + 114) // 31, (h + l - 7 * m + 114) % 31 + 1)
+    days = [
+        (nth(1, 0, 3), "Martin Luther King, Jr. Day"),
+        (nth(2, 0, 3), "Washington's Birthday"),
+        (easter - td(days=2), "Good Friday"),
+        (nth(5, 0, -1), "Memorial Day"),
+        observed(D(year, 6, 19), "Juneteenth National Independence Day"),
+        observed(D(year, 7, 4), "Independence Day"),
+        (nth(9, 0, 1), "Labor Day"),
+        (nth(11, 3, 4), "Thanksgiving Day"),
+        observed(D(year, 12, 25), "Christmas Day"),
+    ]
+    if D(year, 1, 1).weekday() != 5:     # a Saturday New Year's Day is not made up on Friday
+        days.insert(0, observed(D(year, 1, 1), "New Year's Day"))
+    early = [(nth(11, 3, 4) + td(days=1), "day after Thanksgiving")]
+    if D(year, 7, 3).weekday() < 4:      # Monday to Thursday, the day before a weekday July 4
+        early.insert(0, (D(year, 7, 3), "day before Independence Day"))
+    if D(year, 12, 24).weekday() < 4:
+        early.append((D(year, 12, 24), "Christmas Eve"))
+    return ({d.isoformat(): n for d, n in days}, {d.isoformat(): n for d, n in early})
+
+
+for _year in range(max(CALENDAR_YEARS) + 1, 2101):
+    _hol, _early = nyse_rules(_year)
+    NYSE_HOLIDAYS.update(_hol)
+    NYSE_EARLY_CLOSE.update(_early)
+
 OPEN = datetime.time(9, 30)
 CLOSE = datetime.time(16, 0)
 EARLY = datetime.time(13, 0)

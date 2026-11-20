@@ -51,8 +51,14 @@ class ExplicitYes(unittest.TestCase):
         for r in ("", "sure", "ok", "okay", "go", "do it", "yeah", "yep", "absolutely", "send it",
                   "yes to all", "yes, all of them", "yes to the rest", "yes both",
                   "yes AXP", "yes 1000", "yes but make it 1000", "yes?", "no", "not yes",
-                  "yes, wait", "yes if it is under 340"):
+                  "yes, wait", "yes if it is under 340", "yes abort", "yes nevermind", "yes never mind",
+                  "yes actually skip it", "yes oops", "yes I think so", "yes 1250 or 1000"):
             self.assertFalse(self.yes(r), r)
+
+    def test_every_number_must_belong_to_this_order(self):
+        self.assertTrue(self.yes("yes buy 8 TSLA", TSLA_CALL))
+        self.assertTrue(self.yes("yes 8 shares, take-profit 370.04", TSLA_CALL))
+        self.assertFalse(self.yes("yes buy 8 at 364", TSLA_CALL))
 
     def test_amount_must_match_this_order(self):
         sell = {"symbol": "KO", "side": "sell", "qty": "3", "type": "market", "time_in_force": "day"}

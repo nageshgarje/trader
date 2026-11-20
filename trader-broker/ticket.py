@@ -52,7 +52,9 @@ TIF_WORDS = {"day": "good for today", "gtc": "good until canceled", "opg": "at t
 YES_WORDS = ("yes", "y")
 BATCH_WORDS = {"all", "every", "everything", "rest", "remaining", "them", "both", "batch", "each"}
 DOUBT_WORDS = {"no", "not", "dont", "don't", "wait", "cancel", "stop", "but", "maybe", "later",
-               "hold", "unless", "if"}
+               "hold", "unless", "if", "abort", "nevermind", "never", "skip", "nope", "nah", "actually",
+               "instead", "rather", "except", "until", "wrong", "mistake", "oops", "kidding", "joking",
+               "jk", "scratch", "undo", "hmm", "unsure", "think", "guess", "probably", "perhaps"}
 
 
 class TicketError(Exception):
@@ -291,9 +293,10 @@ def parse_yes(reply, order, batch_symbols=()):
     nums = [float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", raw)]
     if nums:
         want = amount_numbers(order)
-        if not any(abs(n - w) < 0.005 for n in nums for w in want):
+        stray = [n for n in nums if not any(abs(n - w) < 0.005 for w in want)]
+        if stray:
             return False, "the reply says %s, but this order is %s" % (
-                ", ".join(_str_num(n) for n in nums), plain(order))
+                ", ".join(_str_num(n) for n in stray), plain(order))
     return True, "explicit yes for %s" % plain(order)
 
 
