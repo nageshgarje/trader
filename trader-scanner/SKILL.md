@@ -140,6 +140,24 @@ are in the calendar.
   failed or had no data)". Never round a partial scan up to "the whole market".
 - NYSE holidays and early closes for 2026 and 2027 (nyse.com, read 2026-10-13).
 
+## India: NSE
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scan.py" universe --market nse            # the NIFTY 500 -> trader/universe.nse.txt
+python3 "${CLAUDE_SKILL_DIR}/scan.py" universe --market nse --list all # every EQ-series NSE stock
+python3 "${CLAUDE_SKILL_DIR}/scan.py" orb --market nse                 # 9:15-9:30 range breakouts so far
+python3 "${CLAUDE_SKILL_DIR}/scan.py" daily --market nse
+```
+
+- **The universe** is NSE's own list, EQ series only (the series brokers allow intraday). The default
+  is the NIFTY 500: liquid names. NSE often refuses scripts; the tool says who it is rather than pose
+  as a browser, so it then uses the NIFTY 500 snapshot shipped in `nse/` (dated in its file name) and
+  says so. For a fresher list, download the CSV in a browser and pass `--offline FILE`.
+- **Symbols** are written as `RELIANCE.NS`, so every later skill knows the market. `"market": "nse"`
+  in `trader/config.json` makes NSE the default for the scanner.
+- **Filters** are in rupees and shares: `--min-price` defaults to Rs 50, `--min-volume` to 200,000
+  (daily). The opening range is 9:15 to 9:30 IST; no new entries after 15:00.
+
 ## Steps
 
 1. Once a week or so: `scan.py universe`.

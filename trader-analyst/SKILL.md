@@ -68,6 +68,19 @@ email. It refuses to call SEC without one.
   the business (investment marks, tax items) are inside it. The tool says so.
   Banks and insurers have no gross margin: blank, not zero.
 
+## India: NSE
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/facts.py" RELIANCE.NS TCS.NS
+```
+
+Indian companies do not file with the SEC, so for `.NS` tickers the numbers come from **Yahoo
+Finance's quarterly figures** (revenue, gross profit, operating income, net income, diluted EPS),
+shown in **Rs crore**. It is unofficial and patchier than SEC data: Yahoo keeps about five quarters
+and can skip one, so year-on-year growth shows only where the quarter a year earlier is there, and
+there are no filing links. Say so, and point the user to the company's results on nseindia.com before
+they rely on a number. Run NSE and US tickers separately. An index (NIFTY) has no earnings.
+
 ## Steps
 
 1. Run it for the companies in question (or the tickers on

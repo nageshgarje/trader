@@ -78,7 +78,8 @@ DEFAULTS = {
 ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                  "order_class", "take_profit_limit_price", "stop_loss_stop_price",
-                 "stop_loss_limit_price", "advanced_instructions")
+                 "stop_loss_limit_price", "advanced_instructions",
+                 "market", "product")                     # NSE orders: the market and Zerodha's product
 PRICE_FIELDS = ("qty", "notional", "limit_price", "stop_price", "take_profit_limit_price",
                 "stop_loss_stop_price", "stop_loss_limit_price")
 TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
@@ -178,6 +179,212 @@ class RiskError(Exception):
     pass
 
 
+# ---------------------------------------------------------------- markets: US (NYSE) or India (NSE)
+# The same block lives in every tool that knows a market; tests/test_nse.py keeps the copies in step.
+
+NSE_HOLIDAYS = {  # NSE circular NSE/CMTR/71775 (2025-12-12): weekday trading holidays for 2026
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
+    "2026-12-25": "Christmas",
+}
+NSE_CALENDAR_YEARS = (2026,)   # Indian holidays follow the lunar calendar: no rule can fill other years
+NSE_INDEXES = {"NIFTY": "^NSEI", "NIFTY50": "^NSEI", "NIFTY_50": "^NSEI", "BANKNIFTY": "^NSEBANK",
+               "NIFTYBANK": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS", "NIFTYIT": "^CNXIT"}
+MARKETS = {
+    "us": {"code": "us", "exchange": "NYSE", "place": "New York", "tz": "ET", "cur": "$",
+           "open": datetime.time(9, 30), "close": datetime.time(16, 0),
+           "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55"},
+    # NSE: 9:15 to 15:30 IST, no daylight saving. Brokers square off intraday positions from about
+    # 15:15 (Zerodha MIS 15:25), so the defaults stop new entries at 15:00 and get flat by 15:15.
+    "nse": {"code": "nse", "exchange": "NSE", "place": "India", "tz": "IST", "cur": "₹",
+            "open": datetime.time(9, 15), "close": datetime.time(15, 30),
+            "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15"},
+}
+TIME_KEYS = ("no_entries_before", "no_entries_after", "flat_by")
+# Money limits are in the market's own currency. The "_usd" names are kept so one config serves every
+# tool, but on NSE they are rupees and come only from the "nse" block: $5,000 is never read as Rs 5,000.
+MONEY_KEYS = ("budget", "max_loss_per_trade_usd", "max_daily_loss_usd", "max_order_usd", "min_order_usd")
+MARKET = MARKETS["us"]
+
+
+def market_for(sym, override=None):
+    """"nse" for an NSE ticker (RELIANCE.NS, ^NSEI, NIFTY, BANKNIFTY) or when asked, else "us"."""
+    if override:
+        code = str(override).strip().lower()
+        code = {"india": "nse", "in": "nse", "nyse": "us", "usa": "us"}.get(code, code)
+        if code not in MARKETS:
+            raise ValueError("market is us or nse, not %r" % override)
+        return code
+    s = str(sym or "").upper().strip()
+    if s.endswith(".NS") or s.startswith("^NSE") or s.startswith("^CNX") or s in NSE_INDEXES:
+        return "nse"
+    return "us"
+
+
+def use_market(code, points=False):
+    """Switch the clock, the session, the calendar and the defaults to one market. points=True for
+    an index (NIFTY is quoted in points, not rupees): prices print with no currency sign."""
+    global MARKET, OPEN, CLOSE
+    MARKET = dict(MARKETS[code], cur="") if points else MARKETS[code]
+    OPEN, CLOSE = MARKET["open"], MARKET["close"]
+    defaults = globals().get("DEFAULTS")
+    if isinstance(defaults, dict):
+        for k in TIME_KEYS:
+            if k in defaults:
+                defaults[k] = MARKET[k]
+    hook = globals().get("on_market")    # a tool with its own session constants rebuilds them here
+    if hook:
+        hook()
+    return MARKET
+
+
+def is_nse():
+    return MARKET["code"] == "nse"
+
+
+def ysym(sym):
+    """The Yahoo ticker: BRK.B -> BRK-B in the US; RELIANCE -> RELIANCE.NS and NIFTY -> ^NSEI for NSE."""
+    s = str(sym).upper().strip()
+    if is_nse():
+        return NSE_INDEXES.get(s) or (s if s.startswith("^") or "." in s else s + ".NS")
+    return s.replace(".", "-")
+
+
+NSE_TICKER = re.compile(r"^\^?[A-Z0-9][A-Z0-9&_\-]{0,24}(\.NS)?$")   # M&M, BAJAJ-AUTO, 360ONE.NS, ^NSEI
+
+
+def nse_ticker_ok(sym):
+    return bool(NSE_TICKER.match(str(sym or "").strip().upper()))
+
+
+def is_index(sym):
+    return ysym(sym).startswith("^")
+
+
+def nse_closed(d):
+    """None when NSE trades on day d, else the reason it is closed."""
+    if d.weekday() >= 5:
+        return "weekend"
+    name = NSE_HOLIDAYS.get(d.isoformat())
+    return ("NSE holiday: " + name) if name else None
+
+
+def calendar_known(d):
+    return d.year in (NSE_CALENDAR_YEARS if is_nse() else globals().get("CALENDAR_YEARS", ()))
+
+
+def calendar_note():
+    if is_nse():
+        return ("NSE has published its holiday list for %s only, and Indian holidays follow the lunar "
+                "calendar: check nseindia.com for this date." % " and ".join(map(str, NSE_CALENDAR_YEARS)))
+    return ("NYSE published its holiday list for %s; this date uses its standing rules, which cannot "
+            "know a special closure: check nyse.com." % " and ".join(map(str, globals().get("CALENDAR_YEARS", ()))))
+
+
+def market_config(doc):
+    """The config for this market. The top-level clock times and money limits are the US ones. NSE takes
+    its own from an "nse" block ({"nse": {"budget": 100000, "max_loss_per_trade_usd": 500,
+    "no_entries_after": "14:30"}}, rupees), its clock defaults otherwise, a daily loss of three times the
+    max loss per trade, and no max or min order unless the block sets one."""
+    doc = dict(doc or {})
+    if is_nse():
+        for k in TIME_KEYS + MONEY_KEYS:
+            doc.pop(k, None)
+        doc.update(doc.get("nse") or {})
+        doc.setdefault("budget", None)
+        doc.setdefault("max_loss_per_trade_usd", None)
+        ml = doc.get("max_loss_per_trade_usd")
+        doc.setdefault("max_daily_loss_usd", 3 * float(ml) if isinstance(ml, (int, float)) else None)
+        doc.setdefault("max_order_usd", None)
+        doc.setdefault("min_order_usd", 0)
+    return doc
+
+
+SPLIT_FILES = ("trader/portfolio.json", "trader/state/broker.json")
+
+
+def market_path(path):
+    """NSE keeps its own account and decision log (rupees, its own daily limits): the default
+    trader/portfolio.json becomes trader/portfolio.nse.json, and the same for trader/state/broker.json."""
+    if is_nse() and path in SPLIT_FILES:
+        return path[:-len(".json")] + ".nse.json"
+    return path
+
+
+def localize(text):
+    """US words to this market's: $ -> the rupee sign, ET -> IST, NYSE -> NSE, New York -> India."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return text
+    cur = MARKET["cur"]
+    if not is_nse():
+        return text.replace("$", cur)
+    try:
+        cur.encode(getattr(sys.stdout, "encoding", None) or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        cur = "Rs "
+    text = text.replace("nyse.com", "nseindia.com").replace("NYSE", "NSE").replace("New York", "India")
+    return re.sub(r"\bET\b", "IST", text.replace("$", cur))
+
+
+class Localized(object):
+    """A stream that localizes what is written to it (stdout and stderr while an NSE run prints)."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, s):
+        return self.stream.write(localize(s))
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def run_localized(fn, *args):
+    """Run fn with stdout and stderr localized for this market, and restore them after."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return fn(*args)
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = Localized(out), Localized(err)
+    try:
+        return fn(*args)
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def peek_json(path):
+    """A JSON object from path, or {} when it is missing or not JSON (for picking the market early)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def run_in_market(code, sym, fn, *args):
+    """Run fn in one market (sym is the ticker, so an index prints in points), then go back to the US."""
+    use_market(code)                     # is_index needs the market: NIFTY is ^NSEI only on NSE
+    use_market(code, points=bool(sym) and is_index(sym))
+    try:
+        return run_localized(fn, *args)
+    finally:
+        use_market("us")
+
+# ---------------------------------------------------------------- end of markets
+
+
 # ---------------------------------------------------------------- time (New York, no tz files)
 
 def _nth_sunday(year, month, n):
@@ -190,6 +397,8 @@ def eastern_offset(utc):
     """Hours from UTC for New York: -4 in daylight time, -5 otherwise.
     DST runs from 2:00 a.m. on the second Sunday of March to 2:00 a.m. on the
     first Sunday of November (US rule since 2007)."""
+    if is_nse():
+        return 5.5                     # India: IST, UTC+5:30 all year
     y = utc.year
     start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
     end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
@@ -202,6 +411,8 @@ def to_eastern(utc):
 
 
 def eastern_to_utc(local):
+    if is_nse():
+        return local - datetime.timedelta(hours=5.5)
     for off in (-4, -5):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
@@ -236,7 +447,10 @@ def parse_utc(text):
 
 
 def trading_day(d):
-    """(is_trading_day, reason). Weekends and the NYSE holiday list."""
+    """(is_trading_day, reason). Weekends and the NYSE (or NSE) holiday list."""
+    if is_nse():
+        why = nse_closed(d)
+        return (False, why) if why else (True, "")
     if d.weekday() >= 5:
         return False, "weekend"
     name = NYSE_HOLIDAYS.get(d.isoformat())
@@ -268,15 +482,13 @@ def window_check(now_et, c):
         return [], []
     warns = []
     d, t = now_et.date(), now_et.time().replace(second=0, microsecond=0)
-    if d.year not in CALENDAR_YEARS:
-        warns.append("NYSE published its holiday list for %s; %s uses its standing rules, which cannot "
-                     "know a special closure: check nyse.com"
-                     % (" and ".join(map(str, CALENDAR_YEARS)), d.isoformat()))
+    if not calendar_known(d):
+        warns.append(calendar_note().rstrip(".") + " (%s)" % d.isoformat())
     ok, why = trading_day(d)
     stamp = now_et.strftime("%a %Y-%m-%d %H:%M")
     if not ok:
         return ["window: the market is closed today (%s, %s New York)" % (why, stamp)], warns
-    close = EARLY if d.isoformat() in NYSE_EARLY_CLOSE else CLOSE
+    close = EARLY if d.isoformat() in NYSE_EARLY_CLOSE and not is_nse() else CLOSE
     if t < OPEN or now_et.time() >= close:
         return ["window: the market is closed (%s New York; the session is %s to %s)"
                 % (stamp, OPEN.strftime("%H:%M"), close.strftime("%H:%M"))], warns
@@ -447,11 +659,27 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             loss_today += ml
     placed_keys = {(str(r.get("symbol", "")).upper(), r.get("side")) for r in done_today}
     win_reasons, win_warns = window_check(now_et, c)
+    nse = is_nse()
+    if nse and c.get("pdt_guard"):
+        top_warn.append("pdt_guard is a US rule: it does not apply on the NSE and is off here")
+        c["pdt_guard"] = False
     pdt_n, pdt_list = day_trades(state, today) if c.get("pdt_guard") else (0, [])
     seen = set()
     results = []
     batch_entries, batch_loss = 0, 0.0
-    if not c.get("paper", True):
+    # NSE: an entry's stop is its own order, a sell SL-M of the same shares placed after the buy fills
+    nse_stops = {}
+    if nse:
+        for o in orders:
+            if (str(o.get("side", "")).lower() == "sell" and str(o.get("type", "")).lower() == "stop"
+                    and _f(o.get("stop_price"))):
+                nse_stops.setdefault(str(o.get("symbol", "")).strip().upper(), _f(o.get("stop_price")))
+    if nse and c.get("paper", True):
+        top_warn.append("paper: Zerodha has no paper account, so trader-broker shows these tickets and sends "
+                        "nothing (\"paper\": false in your config sends real orders)")
+    elif nse:
+        top_warn.append("LIVE (\"paper\": false): these orders go to your Zerodha account and use real money")
+    elif not c.get("paper", True):
         top_warn.append("LIVE account (\"paper\": false): these orders use real money")
     top_warn.extend(win_warns)
 
@@ -522,9 +750,30 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         elif oc or o.get("advanced_instructions"):
             warns.append("advanced order (%s): check every leg before you say yes"
                          % (oc or "advanced_instructions"))
+        if nse:
+            if str(o.get("market") or "nse").lower() != "nse":
+                reasons.append("market: this order is for %s, but this check is for the NSE" % o.get("market"))
+            if bracket or oc:
+                reasons.append("format: Zerodha takes no bracket orders: the stop is its own SL-M sell "
+                               "(trader-budget writes both)")
+            if notional is not None:
+                reasons.append("format: NSE orders are in whole shares (qty), not an amount of money")
+            elif _f(qty) is not None and abs(_f(qty) - round(_f(qty))) > 1e-9:
+                reasons.append("format: NSE orders take whole shares only, got qty %r" % qty)
+            if str(o.get("product") or "").upper() != "MIS":
+                reasons.append("format: a day trade on the NSE is intraday, product MIS (got %r; CNC is "
+                               "delivery, held overnight)" % o.get("product"))
+            if typ == "trailing_stop" or tif not in ("day", "ioc"):
+                reasons.append("format: Zerodha takes market, limit, stop (SL-M) and stop_limit (SL) orders, "
+                               "good for the day")
 
         # asset
-        if sym and OCC.match(sym.replace(" ", "")):
+        if nse:
+            if sym and is_index(sym):
+                reasons.append("asset: %s is an index and cannot be bought; trade NIFTYBEES.NS or a future" % sym)
+            elif sym and not nse_ticker_ok(sym):
+                reasons.append("asset: %s does not look like an NSE ticker (RELIANCE.NS, M&M.NS)" % sym)
+        elif sym and OCC.match(sym.replace(" ", "")):
             if not c.get("allow_options"):
                 reasons.append("asset: %s is an option contract; options are off "
                                "(\"allow_options\": false)" % sym)
@@ -623,12 +872,21 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
         if kind == "entry" and side in ("buy", "sell"):
             long = side == "buy"
             leg_stop, plan_stop = _f(o.get("stop_loss_stop_price")), _f(plan.get("stop"))
+            if nse and long and not leg_stop:
+                leg_stop = nse_stops.get(sym)     # the SL-M order in this batch is the stop at the broker
             stop = leg_stop if leg_stop else plan_stop
             target = _f(o.get("take_profit_limit_price")) or _f(plan.get("target"))
             if leg_stop and plan_stop and abs(leg_stop - plan_stop) > CENT:
-                warns.append("the bracket stop %s differs from the plan's stop %s: the bracket's is the one "
-                             "the broker uses" % (_p(leg_stop), _p(plan_stop)))
-            if stop and not leg_stop:
+                warns.append("the %s stop %s differs from the plan's stop %s: the %s one is what the broker uses"
+                             % ("SL-M" if nse else "bracket", _p(leg_stop), _p(plan_stop),
+                                "SL-M" if nse else "bracket's"))
+            if nse and long and leg_stop:
+                info.append("the stop at the broker is the SL-M sell %s in this batch: place it right after "
+                            "this buy fills" % _p(leg_stop))
+            elif nse and long and stop:
+                warns.append("no SL-M stop order in this batch: the stop %s is in the plan only. Add the stop "
+                             "order (trader-budget --write writes both)" % _p(stop))
+            if stop and not leg_stop and not nse:
                 warns.append("the stop %s is in the plan only, not at the broker: set a stop alert "
                              "(trader-alerts: alerts.py add --from-plan)" % _p(stop))
             if not stop:
@@ -712,7 +970,11 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             warns.extend("exit, not blocked: " + x for x in later)
 
         verdict = "BLOCK" if reasons else "PASS"
-        if verdict == "PASS":
+        protective = nse and side == "sell" and typ == "stop" and o.get("stop_for")
+        if protective:
+            info.append("the protective stop for order %s: it only sells if the price falls to %s"
+                        % (o.get("stop_for"), _p(_f(o.get("stop_price")))))
+        if verdict == "PASS" and not protective:
             if kind == "entry" and side in ("buy", "sell"):
                 batch_entries += 1
                 batch_loss += max_loss or 0.0
@@ -745,6 +1007,7 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
     return {
         "date": today,
         "now_new_york": now_et.strftime("%Y-%m-%d %H:%M"),
+        "market": MARKET["code"],
         "paper": bool(c.get("paper", True)),
         "results": results,
         "pass": sum(1 for r in results if r["verdict"] == "PASS"),
@@ -782,9 +1045,10 @@ def report(res):
         for x in r["warnings"]:
             lines.append("        ~ " + x)
     lines.append("")
-    lines.append("%d passed, %d blocked at %s New York. Cash after the passed orders: %s (%s account)."
+    lines.append("%d passed, %d blocked at %s New York. Cash after the passed orders: %s (%s)."
                  % (res["pass"], res["block"], res["now_new_york"], money(res["cash_after"]),
-                    "paper" if res["paper"] else "LIVE"))
+                    ("paper: tickets only, Zerodha has no paper account" if res.get("market") == "nse"
+                     else "paper account") if res["paper"] else "LIVE account"))
     if res["block"]:
         lines.append("Blocked orders do not go to the broker. Fix the order or your rules, then check again.")
     else:
@@ -829,7 +1093,22 @@ def main(argv=None):
     ap.add_argument("--out", default="trader/state/risk.json", help="where the verdicts are recorded")
     ap.add_argument("--no-write", action="store_true", help="do not record the verdicts")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--market", choices=["us", "nse"],
+                    help="us (the default) or nse (India); orders from trader-budget carry their market")
     a = ap.parse_args(argv)
+    doc = peek_json(a.orders)
+    first = ((doc.get("orders") or [{}])[0] if isinstance(doc.get("orders"), list) else {}) or {}
+    try:
+        code = market_for(first.get("symbol"), a.market or doc.get("market") or first.get("market"))
+    except ValueError as e:
+        print("check.py: %s" % e, file=sys.stderr)
+        return 1
+    return run_in_market(code, None, _run, a)
+
+
+def _run(a):
+    a.portfolio = market_path(a.portfolio)
+    a.state = market_path(a.state)
     try:
         now = parse_now(a.now)
         if a.today and not re.match(r"^\d{4}-\d{2}-\d{2}$", a.today):
@@ -838,7 +1117,7 @@ def main(argv=None):
         orders = doc.get("orders", doc) if isinstance(doc, dict) else doc
         if not isinstance(orders, list) or not orders:
             raise RiskError("no orders in %s" % a.orders)
-        cfg = read_json(a.config, "config", required=False) or {}
+        cfg = market_config(read_json(a.config, "config", required=False) or {})
         portfolio = read_json(a.portfolio, "portfolio", required=False)
         pdoc = read_json(a.prices, "prices", required=False) or {}
         prices, times = load_prices(pdoc)

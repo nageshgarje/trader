@@ -102,6 +102,17 @@ Warnings do not block, but say them to the user: a LIVE account, a number
 sent as a number instead of a string, a stop that lives only in the plan and
 not at the broker, a price too old to use, an early close today.
 
+## India: NSE
+
+Orders with `"market": "nse"` (trader-budget writes it) are checked on the NSE clock (IST, entries
+9:30 to 15:00 by default, NSE's 2026 holidays) against the rupee limits in the config's `"nse"` block,
+plus Zerodha's rules: whole shares only, product MIS (CNC is delivery, held overnight), no bracket
+orders, no indexes. The SL-M sell in the same batch is the entry's stop at the broker: the max loss is
+measured to it, and it passes as an exit once the buy is counted. `pdt_guard` is a US rule and is off.
+NSE keeps its own account and log (`trader/portfolio.nse.json`, `trader/state/broker.nse.json`), so
+rupees and dollars and the two markets' daily limits never mix. Zerodha has no paper account: with
+`"paper": true` it says the tickets will only be shown.
+
 ## Steps
 
 1. If the price may have moved since the plan, refresh it first

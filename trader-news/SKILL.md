@@ -59,6 +59,15 @@ python3 "${CLAUDE_SKILL_DIR}/news.py" --no-sec --json
 - **No predictions.** Report what was published and how far the price is from
   yesterday's close. Never say what the stock will do next.
 
+## India: NSE
+
+For NSE tickers (`RELIANCE.NS`, `NIFTY`) the headlines come from **Google News, India edition**,
+searched by the company's name (from trader-scanner's `trader/universe.nse.txt`, or the ticker):
+Yahoo's headline feed is empty for Indian tickers, and NSE's own announcement feeds refuse scripts.
+There are no SEC filings for Indian companies; for results and announcements check the company's page
+on nseindia.com. Times print in IST when every ticker is an NSE one. Today's move comes from Yahoo as
+usual. Google News links go through news.google.com.
+
 ## Steps
 
 1. Run the check: `python3 "${CLAUDE_SKILL_DIR}/news.py"`. Exit code 1 means

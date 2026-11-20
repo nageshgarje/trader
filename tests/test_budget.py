@@ -26,6 +26,9 @@ CONTRACT_CFG = {
     "fractional": False, "broker": "alpaca", "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
     "sec_user_agent": "Your Name you@example.com",
+    # India (NSE): rupees and IST times, used only for NSE trades
+    "nse": {"budget": 100000, "max_loss_per_trade_usd": 500, "max_daily_loss_usd": 1500, "max_position_pct": 75,
+            "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15"},
 }
 # v1's rules, for the weights mode tests
 V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000, "min_order_usd": 5,

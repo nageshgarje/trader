@@ -96,6 +96,14 @@ not in the data (wrong date, not closed yet, a future day), or when the plan
 does not make sense (a stop above a buy's entry, an entry off the 5-minute
 grid). A live in-progress bar is never used.
 
+## India: NSE
+
+A plan from trader-exit for an NSE stock carries `"market": "nse"`, and the replay follows it (or
+pass `--market nse` with the flags). The replay day ends at **15:15 IST**, not 15:30: Yahoo's NSE
+5-minute bars for 15:20 and 15:25 are missing on most days, and brokers square off intraday positions
+from 15:15 anyway. A full NSE session is the 72 bars from 9:15 to 15:15. Holidays come from NSE's
+2026 list. On RELIANCE.NS the 60 days hold about 57 full sessions.
+
 ## Steps
 
 1. Make sure `trader/plan.json` is today's plan from `/trader-exit`. If there

@@ -158,6 +158,222 @@ class TMError(Exception):
     pass
 
 
+# ---------------------------------------------------------------- markets: US (NYSE) or India (NSE)
+# The same block lives in every tool that knows a market; tests/test_nse.py keeps the copies in step.
+
+NSE_HOLIDAYS = {  # NSE circular NSE/CMTR/71775 (2025-12-12): weekday trading holidays for 2026
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
+    "2026-12-25": "Christmas",
+}
+NSE_CALENDAR_YEARS = (2026,)   # Indian holidays follow the lunar calendar: no rule can fill other years
+NSE_INDEXES = {"NIFTY": "^NSEI", "NIFTY50": "^NSEI", "NIFTY_50": "^NSEI", "BANKNIFTY": "^NSEBANK",
+               "NIFTYBANK": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS", "NIFTYIT": "^CNXIT"}
+MARKETS = {
+    "us": {"code": "us", "exchange": "NYSE", "place": "New York", "tz": "ET", "cur": "$",
+           "open": datetime.time(9, 30), "close": datetime.time(16, 0),
+           "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55"},
+    # NSE: 9:15 to 15:30 IST, no daylight saving. Brokers square off intraday positions from about
+    # 15:15 (Zerodha MIS 15:25), so the defaults stop new entries at 15:00 and get flat by 15:15.
+    "nse": {"code": "nse", "exchange": "NSE", "place": "India", "tz": "IST", "cur": "₹",
+            "open": datetime.time(9, 15), "close": datetime.time(15, 30),
+            "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15"},
+}
+TIME_KEYS = ("no_entries_before", "no_entries_after", "flat_by")
+# Money limits are in the market's own currency. The "_usd" names are kept so one config serves every
+# tool, but on NSE they are rupees and come only from the "nse" block: $5,000 is never read as Rs 5,000.
+MONEY_KEYS = ("budget", "max_loss_per_trade_usd", "max_daily_loss_usd", "max_order_usd", "min_order_usd")
+MARKET = MARKETS["us"]
+
+
+def market_for(sym, override=None):
+    """"nse" for an NSE ticker (RELIANCE.NS, ^NSEI, NIFTY, BANKNIFTY) or when asked, else "us"."""
+    if override:
+        code = str(override).strip().lower()
+        code = {"india": "nse", "in": "nse", "nyse": "us", "usa": "us"}.get(code, code)
+        if code not in MARKETS:
+            raise ValueError("market is us or nse, not %r" % override)
+        return code
+    s = str(sym or "").upper().strip()
+    if s.endswith(".NS") or s.startswith("^NSE") or s.startswith("^CNX") or s in NSE_INDEXES:
+        return "nse"
+    return "us"
+
+
+def use_market(code, points=False):
+    """Switch the clock, the session, the calendar and the defaults to one market. points=True for
+    an index (NIFTY is quoted in points, not rupees): prices print with no currency sign."""
+    global MARKET, OPEN, CLOSE
+    MARKET = dict(MARKETS[code], cur="") if points else MARKETS[code]
+    OPEN, CLOSE = MARKET["open"], MARKET["close"]
+    defaults = globals().get("DEFAULTS")
+    if isinstance(defaults, dict):
+        for k in TIME_KEYS:
+            if k in defaults:
+                defaults[k] = MARKET[k]
+    hook = globals().get("on_market")    # a tool with its own session constants rebuilds them here
+    if hook:
+        hook()
+    return MARKET
+
+
+def is_nse():
+    return MARKET["code"] == "nse"
+
+
+def ysym(sym):
+    """The Yahoo ticker: BRK.B -> BRK-B in the US; RELIANCE -> RELIANCE.NS and NIFTY -> ^NSEI for NSE."""
+    s = str(sym).upper().strip()
+    if is_nse():
+        return NSE_INDEXES.get(s) or (s if s.startswith("^") or "." in s else s + ".NS")
+    return s.replace(".", "-")
+
+
+NSE_TICKER = re.compile(r"^\^?[A-Z0-9][A-Z0-9&_\-]{0,24}(\.NS)?$")   # M&M, BAJAJ-AUTO, 360ONE.NS, ^NSEI
+
+
+def nse_ticker_ok(sym):
+    return bool(NSE_TICKER.match(str(sym or "").strip().upper()))
+
+
+def is_index(sym):
+    return ysym(sym).startswith("^")
+
+
+def nse_closed(d):
+    """None when NSE trades on day d, else the reason it is closed."""
+    if d.weekday() >= 5:
+        return "weekend"
+    name = NSE_HOLIDAYS.get(d.isoformat())
+    return ("NSE holiday: " + name) if name else None
+
+
+def calendar_known(d):
+    return d.year in (NSE_CALENDAR_YEARS if is_nse() else globals().get("CALENDAR_YEARS", ()))
+
+
+def calendar_note():
+    if is_nse():
+        return ("NSE has published its holiday list for %s only, and Indian holidays follow the lunar "
+                "calendar: check nseindia.com for this date." % " and ".join(map(str, NSE_CALENDAR_YEARS)))
+    return ("NYSE published its holiday list for %s; this date uses its standing rules, which cannot "
+            "know a special closure: check nyse.com." % " and ".join(map(str, globals().get("CALENDAR_YEARS", ()))))
+
+
+def market_config(doc):
+    """The config for this market. The top-level clock times and money limits are the US ones. NSE takes
+    its own from an "nse" block ({"nse": {"budget": 100000, "max_loss_per_trade_usd": 500,
+    "no_entries_after": "14:30"}}, rupees), its clock defaults otherwise, a daily loss of three times the
+    max loss per trade, and no max or min order unless the block sets one."""
+    doc = dict(doc or {})
+    if is_nse():
+        for k in TIME_KEYS + MONEY_KEYS:
+            doc.pop(k, None)
+        doc.update(doc.get("nse") or {})
+        doc.setdefault("budget", None)
+        doc.setdefault("max_loss_per_trade_usd", None)
+        ml = doc.get("max_loss_per_trade_usd")
+        doc.setdefault("max_daily_loss_usd", 3 * float(ml) if isinstance(ml, (int, float)) else None)
+        doc.setdefault("max_order_usd", None)
+        doc.setdefault("min_order_usd", 0)
+    return doc
+
+
+SPLIT_FILES = ("trader/portfolio.json", "trader/state/broker.json")
+
+
+def market_path(path):
+    """NSE keeps its own account and decision log (rupees, its own daily limits): the default
+    trader/portfolio.json becomes trader/portfolio.nse.json, and the same for trader/state/broker.json."""
+    if is_nse() and path in SPLIT_FILES:
+        return path[:-len(".json")] + ".nse.json"
+    return path
+
+
+def localize(text):
+    """US words to this market's: $ -> the rupee sign, ET -> IST, NYSE -> NSE, New York -> India."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return text
+    cur = MARKET["cur"]
+    if not is_nse():
+        return text.replace("$", cur)
+    try:
+        cur.encode(getattr(sys.stdout, "encoding", None) or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        cur = "Rs "
+    text = text.replace("nyse.com", "nseindia.com").replace("NYSE", "NSE").replace("New York", "India")
+    return re.sub(r"\bET\b", "IST", text.replace("$", cur))
+
+
+class Localized(object):
+    """A stream that localizes what is written to it (stdout and stderr while an NSE run prints)."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, s):
+        return self.stream.write(localize(s))
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def run_localized(fn, *args):
+    """Run fn with stdout and stderr localized for this market, and restore them after."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return fn(*args)
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = Localized(out), Localized(err)
+    try:
+        return fn(*args)
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def peek_json(path):
+    """A JSON object from path, or {} when it is missing or not JSON (for picking the market early)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def run_in_market(code, sym, fn, *args):
+    """Run fn in one market (sym is the ticker, so an index prints in points), then go back to the US."""
+    use_market(code)                     # is_index needs the market: NIFTY is ^NSEI only on NSE
+    use_market(code, points=bool(sym) and is_index(sym))
+    try:
+        return run_localized(fn, *args)
+    finally:
+        use_market("us")
+
+# ---------------------------------------------------------------- end of markets
+
+
+def on_market():
+    """The replay day in 5-minute bars: 78 in New York (9:30 to 16:00). In India 72 (9:15 to 15:15): Yahoo's
+    NSE bars for 15:20 and 15:25 are missing on most days, and brokers square off intraday positions from
+    15:15, so an NSE replay ends at 15:15 and a full session is every bar up to then."""
+    global OPEN_MIN, CLOSE_MIN, SESSION_BARS
+    OPEN_MIN = OPEN.hour * 60 + OPEN.minute
+    CLOSE_MIN = (15 * 60 + 15) if is_nse() else CLOSE.hour * 60 + CLOSE.minute
+    SESSION_BARS = (CLOSE_MIN - OPEN_MIN) // 5
+
+
 # ---------------------------------------------------------------- time (copied from trader-alerts)
 
 def _nth_sunday(year, month, n):
@@ -170,6 +386,8 @@ def eastern_offset(utc):
     """Hours from UTC for New York: -4 in daylight time, -5 otherwise.
     DST runs from 2:00 a.m. on the second Sunday of March to 2:00 a.m. on the
     first Sunday of November (US rule since 2007)."""
+    if is_nse():
+        return 5.5                     # India: IST, UTC+5:30 all year
     y = utc.year
     start = datetime.datetime.combine(_nth_sunday(y, 3, 2), datetime.time(7, 0))   # 2:00 EST
     end = datetime.datetime.combine(_nth_sunday(y, 11, 1), datetime.time(6, 0))    # 2:00 EDT
@@ -182,6 +400,8 @@ def to_eastern(utc):
 
 
 def eastern_to_utc(local):
+    if is_nse():
+        return local - datetime.timedelta(hours=5.5)
     for off in (-4, -5):
         utc = local - datetime.timedelta(hours=off)
         if eastern_offset(utc) == off:
@@ -237,7 +457,7 @@ def clock24(minutes):
 
 def chart_url(sym, host="query2"):
     return "https://%s.finance.yahoo.com/v8/finance/chart/%s?range=60d&interval=5m" % (
-        host, urllib.parse.quote(sym.upper().replace(".", "-")))
+        host, urllib.parse.quote(ysym(sym)))
 
 
 def _sleep(seconds):
@@ -581,7 +801,7 @@ def load_plan(a, now_utc):
 def normalize_plan(raw, src="flags"):
     """A plan dict (trader/plan.json shape) -> the checked plan the time machine runs."""
     sym = str(raw.get("symbol") or "").strip().upper()
-    if not re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", sym):
+    if not (nse_ticker_ok(sym) if is_nse() else re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", sym)):
         raise TMError("the plan needs a ticker symbol, got %r" % raw.get("symbol"))
     side = str(raw.get("side") or "buy").lower()
     if side not in ("buy", "sell"):
@@ -736,7 +956,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     result = chart_result(text, sym)
     meta, bars, dropped = parse_bars(result, now_utc)
     msym = str(meta.get("symbol") or "").upper()
-    if msym and msym != sym.replace(".", "-"):
+    if msym and msym != ysym(sym):
         raise TMError("the data is for %s but the plan is for %s" % (msym, sym))
     gran = meta.get("dataGranularity")
     if gran and gran != "5m":
@@ -744,7 +964,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if not bars:
         raise TMError("no complete 5-minute bars for %s in the data" % sym)
     k = plan["entry_bar"]
-    early = plan["date"] in NYSE_EARLY_CLOSE
+    early = plan["date"] in NYSE_EARLY_CLOSE and not is_nse()
     end_min = EARLY_MIN if early else CLOSE_MIN
     until_min = end_min if until is None else parse_clock(until, "--until")
     if (until_min - OPEN_MIN) % 5 or until_min > end_min:
@@ -787,6 +1007,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     last_bar = bars[-1]
     return {
         "created_by": "trader-timemachine",
+        "market": MARKET["code"],
         "created_at": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source,
         "data": {"symbol": msym or sym, "interval": "5m", "range": "60d",
@@ -981,6 +1202,8 @@ def main(argv=None):
         p.add_argument("--until", help="end each replay at this time (default 16:00, the close)")
         p.add_argument("--offline", metavar="FILE", help="a saved Yahoo chart JSON (.json or .json.gz), no network")
         p.add_argument("--now", help='pretend it is this time ("2026-10-19 10:15" New York, or ISO with Z)')
+        p.add_argument("--market", choices=["us", "nse"],
+                       help="us (the default) or nse (India); a plan from trader-exit or an .NS ticker picks it")
 
     p = sub.add_parser("run", help="replay the plan: 10,000 simulated sessions plus the history")
     common(p)
@@ -995,6 +1218,24 @@ def main(argv=None):
     if not a.cmd:
         ap.print_help()
         return 1
+    try:
+        code, sym = choose_market(a)
+    except ValueError as e:
+        print("timemachine.py: %s" % e, file=sys.stderr)
+        return 1
+    return run_in_market(code, sym, _run, a)
+
+
+def choose_market(a):
+    """(market, ticker): --market, else the plan's "market", else the ticker (RELIANCE.NS, NIFTY are NSE)."""
+    doc = {} if a.symbol else peek_json(getattr(a, "from_file", None) or a.plan)
+    if "plan" in doc and isinstance(doc["plan"], dict):          # a saved timemachine.json
+        doc = dict(doc["plan"], market=doc.get("market") or doc["plan"].get("market"))
+    sym = a.symbol or doc.get("symbol")
+    return market_for(sym, a.market or doc.get("market")), sym
+
+
+def _run(a):
     try:
         return {"run": cmd_run, "chart": cmd_chart}[a.cmd](a)
     except TMError as e:

@@ -40,6 +40,7 @@ Numbers only: this tool never says whether a stock is a buy.
 """
 
 import argparse
+import datetime
 import datetime as _dt
 import gzip
 import json
@@ -48,6 +49,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -238,6 +240,12 @@ def analyse(companyfacts, quarters=6, name=None):
     concepts = {}
     for key in CONCEPTS:
         s[key], concepts[key] = series(companyfacts, key, derive_q4=True)
+    return analyse_series(s, quarters, name or companyfacts.get("entityName"),
+                          str(companyfacts.get("cik", "")).zfill(10), concepts)
+
+
+def analyse_series(s, quarters=6, name=None, cik=None, concepts=None):
+    """The report from quarterly series {key: {end: {"value", ...}}} (SEC facts or Yahoo's figures)."""
     rev = s["revenue"]
     if not rev and not s["net_income"]:
         raise FactsError("no quarterly revenue or net income in the XBRL facts")
@@ -273,9 +281,7 @@ def analyse(companyfacts, quarters=6, name=None):
             ttm[key] = sum(s[key][e]["value"] for e in last4)
     if "eps_diluted" in ttm:
         ttm["eps_diluted"] = round(ttm["eps_diluted"], 2)
-    return {"entity": name or companyfacts.get("entityName"),
-            "cik": str(companyfacts.get("cik", "")).zfill(10),
-            "rows": rows, "ttm": ttm, "concepts": concepts}
+    return {"entity": name, "cik": cik, "rows": rows, "ttm": ttm, "concepts": concepts or {}}
 
 
 def stale_note(result, filings):
@@ -301,7 +307,11 @@ def changes(result):
     out = []
 
     def money(v):
-        return "n/a" if v is None else "$%.2fB" % (v / 1e9) if abs(v) >= 1e9 else "$%.1fM" % (v / 1e6)
+        if v is None:
+            return "n/a"
+        if is_nse():                      # Indian convention: crore (10 million)
+            return "$%s crore" % "{:,.0f}".format(v / 1e7)
+        return "$%.2fB" % (v / 1e9) if abs(v) >= 1e9 else "$%.1fM" % (v / 1e6)
 
     label = "Quarter ending %s%s" % (cur["end"], " (derived from the 10-K)" if cur["derived"] else "")
     line = "%s: revenue %s" % (label, money(cur["revenue"]))
@@ -326,7 +336,8 @@ def changes(result):
     if cur["net_income"] is not None and cur["operating_income"] is not None \
             and cur["net_income"] > cur["operating_income"]:
         out.append("Net income is above operating income: it includes gains outside the "
-                   "business (investments, tax items). Check the 10-Q before reading it as growth.")
+                   "business (investments, tax items). Check the %s before reading it as growth."
+                   % ("company's results filing on NSE" if is_nse() else "10-Q"))
     if prev and cur["revenue"] is not None and prev["revenue"]:
         out.append("Revenue %+.1f%% vs the quarter before (many businesses are seasonal: "
                    "compare with a year earlier first)." % pct(cur["revenue"], prev["revenue"]))
@@ -386,7 +397,7 @@ def latest_filings(submissions, cik, fetcher=None):
 def _m(v):
     if v is None:
         return "-"
-    return "{:,.0f}".format(v / 1e6)
+    return "{:,.0f}".format(v / (1e7 if is_nse() else 1e6))
 
 
 def _p(v):
@@ -398,8 +409,12 @@ def _pm(v):
 
 
 def render(ticker, result, filings):
-    out = ["%s (%s), CIK %s. US$ millions except EPS. Source: SEC XBRL company facts." % (
-        result["entity"], ticker, result["cik"]), ""]
+    if is_nse():
+        out = ["%s (%s). Rs crore except EPS. Source: Yahoo Finance quarterly figures (unofficial; "
+               "check the company's results on nseindia.com)." % (result["entity"] or ticker, ticker), ""]
+    else:
+        out = ["%s (%s), CIK %s. US$ millions except EPS. Source: SEC XBRL company facts." % (
+            result["entity"], ticker, result["cik"]), ""]
     out.append("%-11s %-9s %10s %8s %7s %7s %7s %10s %8s %7s" % (
         "quarter end", "fiscal", "revenue", "rev yoy", "gross", "oper", "net",
         "net inc", "EPS dil", "EPS yoy"))
@@ -412,9 +427,10 @@ def render(ticker, result, filings):
     t = result["ttm"]
     if t:
         out.append("")
+        unit = " crore" if is_nse() else "M"
         out.append("Last 4 quarters: revenue %s, net income %s, diluted EPS %s." % (
-            "$" + _m(t.get("revenue")) + "M" if t.get("revenue") is not None else "-",
-            "$" + _m(t.get("net_income")) + "M" if t.get("net_income") is not None else "-",
+            "$" + _m(t.get("revenue")) + unit if t.get("revenue") is not None else "-",
+            "$" + _m(t.get("net_income")) + unit if t.get("net_income") is not None else "-",
             "$%.2f" % t["eps_diluted"] if t.get("eps_diluted") is not None else "-"))
     out.append("")
     out.append("What changed:")
@@ -450,7 +466,123 @@ def metrics_row(ticker, result):
             "revenue_growth_yoy": cur.get("revenue_yoy"), "eps_growth_yoy": cur.get("eps_yoy"),
             "net_income_growth_yoy": cur.get("net_income_yoy"),
             "gross_margin": cur.get("gross_margin"), "operating_margin": cur.get("operating_margin"),
-            "net_margin": cur.get("net_margin"), "source": "SEC XBRL company facts"}
+            "net_margin": cur.get("net_margin"),
+            "source": "Yahoo Finance (unofficial)" if is_nse() else "SEC XBRL company facts",
+            "currency": "INR" if is_nse() else "USD"}
+
+
+# ---------------------------------------------------------------- NSE: Yahoo's quarterly figures
+
+YAHOO_FUND = ("https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/%s"
+              "?type=%s&period1=1483228800&period2=%d")
+YAHOO_TYPES = {"revenue": "quarterlyTotalRevenue", "gross_profit": "quarterlyGrossProfit",
+               "cost_of_revenue": "quarterlyCostOfRevenue", "operating_income": "quarterlyOperatingIncome",
+               "net_income": "quarterlyNetIncome", "eps_diluted": "quarterlyDilutedEPS"}
+YAHOO_UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
+
+
+def yahoo_series(doc):
+    """Yahoo's fundamentals-timeseries JSON -> {key: {end: {"value", "end", "fp", "fy"}}}. Yahoo keeps about
+    five quarters and can skip one, so a quarter has a year-earlier one to compare with only sometimes."""
+    try:
+        results = doc["timeseries"]["result"]
+    except (KeyError, TypeError):
+        raise FactsError("Yahoo's figures are not the shape this tool knows")
+    by_type = {}
+    for r in results or []:
+        t = ((r.get("meta") or {}).get("type") or [None])[0]
+        if t:
+            by_type[t] = [x for x in (r.get(t) or []) if x and x.get("reportedValue")]
+    s = {}
+    for key, t in YAHOO_TYPES.items():
+        s[key] = {}
+        for x in by_type.get(t, []):
+            end = x.get("asOfDate")
+            v = (x.get("reportedValue") or {}).get("raw")
+            if end and isinstance(v, (int, float)):
+                s[key][end] = {"value": float(v), "end": end, "fp": "", "fy": end[:4], "form": "Yahoo"}
+    if not s["revenue"] and not s["net_income"]:
+        raise FactsError("Yahoo has no quarterly revenue or net income for this ticker")
+    return s
+
+
+def yahoo_name(sym):
+    """The company name from trader-scanner's NSE universe, if it is there."""
+    try:
+        with open("trader/universe.nse.txt", encoding="utf-8") as fh:
+            for ln in fh:
+                if ln.upper().startswith(sym + "|"):
+                    return ln.split("|", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+def fetch_yahoo_figures(sym, offline=None):
+    name = "yahoo-fund-%s.json" % sym
+    if offline:
+        path = os.path.join(offline, name)
+        if not os.path.exists(path):
+            raise FactsError("offline: no file %s" % path)
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    url = YAHOO_FUND % (urllib.parse.quote(sym), ",".join(YAHOO_TYPES.values()), int(time.time()))
+    req = urllib.request.Request(url, headers={"User-Agent": YAHOO_UA, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise FactsError("Yahoo answered HTTP %d for %s" % (exc.code, sym))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise FactsError("could not read Yahoo's figures for %s: %s" % (sym, getattr(exc, "reason", exc)))
+
+
+def main_nse(args):
+    """trader-analyst for NSE companies: Yahoo's quarterly figures, the same report."""
+    results, rows, failed = [], [], 0
+    for t in args.tickers:
+        sym = ysym(t)
+        if is_index(sym):
+            print("facts: %s is an index, not a company: it has no earnings" % sym, file=sys.stderr)
+            failed += 1
+            continue
+        try:
+            result = analyse_series(yahoo_series(fetch_yahoo_figures(sym, args.offline)), args.quarters,
+                                    yahoo_name(sym) or sym)
+        except FactsError as exc:
+            print("facts: %s: %s" % (sym, exc), file=sys.stderr)
+            failed += 1
+            continue
+        results.append({"ticker": sym, "result": result, "filings": None, "changes": changes(result),
+                        "note": None, "source": "yahoo"})
+        rows.append(metrics_row(sym, result))
+        if not args.json:
+            sys.stdout.write(render(sym, result, None))
+            sys.stdout.write("Yahoo keeps about five quarters and can skip one, so year-on-year growth shows "
+                             "only where the quarter a year earlier is there.\n\n")
+    if args.json:
+        print(json.dumps(results, indent=2))
+    if args.metrics and rows:
+        write_metrics(args.metrics, rows, args.json)
+    return 0 if results and not failed else (1 if results else 2)
+
+
+def write_metrics(path, rows, quiet=False):
+    existing = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            existing = {r["ticker"]: r for r in json.load(fh).get("companies", [])}
+    for r in rows:
+        existing[r["ticker"]] = r
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"as_of": _dt.date.today().isoformat(),
+                   "companies": sorted(existing.values(), key=lambda r: r["ticker"])}, fh, indent=2)
+        fh.write("\n")
+    if not quiet:
+        print("wrote %s (%d companies)" % (path, len(existing)))
 
 
 def clean_title(title):
@@ -467,6 +599,212 @@ def ticker_ciks(fetcher):
     return out
 
 
+# ---------------------------------------------------------------- markets: US (NYSE) or India (NSE)
+# The same block lives in every tool that knows a market; tests/test_nse.py keeps the copies in step.
+
+NSE_HOLIDAYS = {  # NSE circular NSE/CMTR/71775 (2025-12-12): weekday trading holidays for 2026
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
+    "2026-12-25": "Christmas",
+}
+NSE_CALENDAR_YEARS = (2026,)   # Indian holidays follow the lunar calendar: no rule can fill other years
+NSE_INDEXES = {"NIFTY": "^NSEI", "NIFTY50": "^NSEI", "NIFTY_50": "^NSEI", "BANKNIFTY": "^NSEBANK",
+               "NIFTYBANK": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS", "NIFTYIT": "^CNXIT"}
+MARKETS = {
+    "us": {"code": "us", "exchange": "NYSE", "place": "New York", "tz": "ET", "cur": "$",
+           "open": datetime.time(9, 30), "close": datetime.time(16, 0),
+           "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55"},
+    # NSE: 9:15 to 15:30 IST, no daylight saving. Brokers square off intraday positions from about
+    # 15:15 (Zerodha MIS 15:25), so the defaults stop new entries at 15:00 and get flat by 15:15.
+    "nse": {"code": "nse", "exchange": "NSE", "place": "India", "tz": "IST", "cur": "₹",
+            "open": datetime.time(9, 15), "close": datetime.time(15, 30),
+            "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15"},
+}
+TIME_KEYS = ("no_entries_before", "no_entries_after", "flat_by")
+# Money limits are in the market's own currency. The "_usd" names are kept so one config serves every
+# tool, but on NSE they are rupees and come only from the "nse" block: $5,000 is never read as Rs 5,000.
+MONEY_KEYS = ("budget", "max_loss_per_trade_usd", "max_daily_loss_usd", "max_order_usd", "min_order_usd")
+MARKET = MARKETS["us"]
+
+
+def market_for(sym, override=None):
+    """"nse" for an NSE ticker (RELIANCE.NS, ^NSEI, NIFTY, BANKNIFTY) or when asked, else "us"."""
+    if override:
+        code = str(override).strip().lower()
+        code = {"india": "nse", "in": "nse", "nyse": "us", "usa": "us"}.get(code, code)
+        if code not in MARKETS:
+            raise ValueError("market is us or nse, not %r" % override)
+        return code
+    s = str(sym or "").upper().strip()
+    if s.endswith(".NS") or s.startswith("^NSE") or s.startswith("^CNX") or s in NSE_INDEXES:
+        return "nse"
+    return "us"
+
+
+def use_market(code, points=False):
+    """Switch the clock, the session, the calendar and the defaults to one market. points=True for
+    an index (NIFTY is quoted in points, not rupees): prices print with no currency sign."""
+    global MARKET, OPEN, CLOSE
+    MARKET = dict(MARKETS[code], cur="") if points else MARKETS[code]
+    OPEN, CLOSE = MARKET["open"], MARKET["close"]
+    defaults = globals().get("DEFAULTS")
+    if isinstance(defaults, dict):
+        for k in TIME_KEYS:
+            if k in defaults:
+                defaults[k] = MARKET[k]
+    hook = globals().get("on_market")    # a tool with its own session constants rebuilds them here
+    if hook:
+        hook()
+    return MARKET
+
+
+def is_nse():
+    return MARKET["code"] == "nse"
+
+
+def ysym(sym):
+    """The Yahoo ticker: BRK.B -> BRK-B in the US; RELIANCE -> RELIANCE.NS and NIFTY -> ^NSEI for NSE."""
+    s = str(sym).upper().strip()
+    if is_nse():
+        return NSE_INDEXES.get(s) or (s if s.startswith("^") or "." in s else s + ".NS")
+    return s.replace(".", "-")
+
+
+NSE_TICKER = re.compile(r"^\^?[A-Z0-9][A-Z0-9&_\-]{0,24}(\.NS)?$")   # M&M, BAJAJ-AUTO, 360ONE.NS, ^NSEI
+
+
+def nse_ticker_ok(sym):
+    return bool(NSE_TICKER.match(str(sym or "").strip().upper()))
+
+
+def is_index(sym):
+    return ysym(sym).startswith("^")
+
+
+def nse_closed(d):
+    """None when NSE trades on day d, else the reason it is closed."""
+    if d.weekday() >= 5:
+        return "weekend"
+    name = NSE_HOLIDAYS.get(d.isoformat())
+    return ("NSE holiday: " + name) if name else None
+
+
+def calendar_known(d):
+    return d.year in (NSE_CALENDAR_YEARS if is_nse() else globals().get("CALENDAR_YEARS", ()))
+
+
+def calendar_note():
+    if is_nse():
+        return ("NSE has published its holiday list for %s only, and Indian holidays follow the lunar "
+                "calendar: check nseindia.com for this date." % " and ".join(map(str, NSE_CALENDAR_YEARS)))
+    return ("NYSE published its holiday list for %s; this date uses its standing rules, which cannot "
+            "know a special closure: check nyse.com." % " and ".join(map(str, globals().get("CALENDAR_YEARS", ()))))
+
+
+def market_config(doc):
+    """The config for this market. The top-level clock times and money limits are the US ones. NSE takes
+    its own from an "nse" block ({"nse": {"budget": 100000, "max_loss_per_trade_usd": 500,
+    "no_entries_after": "14:30"}}, rupees), its clock defaults otherwise, a daily loss of three times the
+    max loss per trade, and no max or min order unless the block sets one."""
+    doc = dict(doc or {})
+    if is_nse():
+        for k in TIME_KEYS + MONEY_KEYS:
+            doc.pop(k, None)
+        doc.update(doc.get("nse") or {})
+        doc.setdefault("budget", None)
+        doc.setdefault("max_loss_per_trade_usd", None)
+        ml = doc.get("max_loss_per_trade_usd")
+        doc.setdefault("max_daily_loss_usd", 3 * float(ml) if isinstance(ml, (int, float)) else None)
+        doc.setdefault("max_order_usd", None)
+        doc.setdefault("min_order_usd", 0)
+    return doc
+
+
+SPLIT_FILES = ("trader/portfolio.json", "trader/state/broker.json")
+
+
+def market_path(path):
+    """NSE keeps its own account and decision log (rupees, its own daily limits): the default
+    trader/portfolio.json becomes trader/portfolio.nse.json, and the same for trader/state/broker.json."""
+    if is_nse() and path in SPLIT_FILES:
+        return path[:-len(".json")] + ".nse.json"
+    return path
+
+
+def localize(text):
+    """US words to this market's: $ -> the rupee sign, ET -> IST, NYSE -> NSE, New York -> India."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return text
+    cur = MARKET["cur"]
+    if not is_nse():
+        return text.replace("$", cur)
+    try:
+        cur.encode(getattr(sys.stdout, "encoding", None) or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        cur = "Rs "
+    text = text.replace("nyse.com", "nseindia.com").replace("NYSE", "NSE").replace("New York", "India")
+    return re.sub(r"\bET\b", "IST", text.replace("$", cur))
+
+
+class Localized(object):
+    """A stream that localizes what is written to it (stdout and stderr while an NSE run prints)."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, s):
+        return self.stream.write(localize(s))
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def run_localized(fn, *args):
+    """Run fn with stdout and stderr localized for this market, and restore them after."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return fn(*args)
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = Localized(out), Localized(err)
+    try:
+        return fn(*args)
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def peek_json(path):
+    """A JSON object from path, or {} when it is missing or not JSON (for picking the market early)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def run_in_market(code, sym, fn, *args):
+    """Run fn in one market (sym is the ticker, so an index prints in points), then go back to the US."""
+    use_market(code)                     # is_index needs the market: NIFTY is ^NSEI only on NSE
+    use_market(code, points=bool(sym) and is_index(sym))
+    try:
+        return run_localized(fn, *args)
+    finally:
+        use_market("us")
+
+# ---------------------------------------------------------------- end of markets
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("tickers", nargs="*", help="tickers, e.g. AAPL KO")
@@ -478,9 +816,22 @@ def main(argv=None):
     ap.add_argument("--config", default="trader/config.json")
     ap.add_argument("--offline", metavar="DIR")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--market", choices=["us", "nse"],
+                    help="nse: Indian companies from Yahoo's quarterly figures; .NS tickers pick it")
     args = ap.parse_args(argv)
     if not args.tickers and not args.cik:
         ap.print_help()
+        return 2
+    try:
+        nse = [market_for(t, args.market) == "nse" for t in args.tickers]
+    except ValueError as e:
+        print("facts: %s" % e, file=sys.stderr)
+        return 2
+    if nse and all(nse):
+        return run_in_market("nse", None, main_nse, args)
+    if any(nse):
+        print("facts: run NSE (.NS) and US tickers separately: they come from different sources",
+              file=sys.stderr)
         return 2
     ua = user_agent(args.user_agent, args.config)
     if not ua and not args.offline:

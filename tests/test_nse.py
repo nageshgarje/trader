@@ -14,7 +14,7 @@ from _load import load, FIX
 
 entry = load("trader-entry", "entry")
 exitp = load("trader-exit", "exit")
-NSE = os.path.join(FIX, "trader-entry", "nse")
+NSE = os.path.join(FIX, "nse")
 REL = os.path.join(NSE, "RELIANCE.NS-5d5m-2026-11-20.json.gz")
 NIFTY = os.path.join(NSE, "NSEI-5d5m-2026-11-20.json.gz")
 
@@ -64,18 +64,29 @@ class Market(unittest.TestCase):
     def test_us_clock_times_in_the_config_do_not_leak_into_nse(self):
         doc = {"no_entries_after": "15:30", "flat_by": "15:55", "nse": {"no_entries_after": "14:30"}}
         entry.use_market("nse")
-        self.assertEqual(entry.market_config(doc), {"nse": {"no_entries_after": "14:30"}, "no_entries_after": "14:30"})
+        cfg = entry.market_config(doc)
+        self.assertEqual((cfg["no_entries_after"], cfg["budget"], cfg["max_loss_per_trade_usd"]), ("14:30", None, None))
+        self.assertNotIn("flat_by", cfg)
+        money = entry.market_config({"budget": 5000, "max_loss_per_trade_usd": 50,
+                                     "nse": {"budget": 100000, "max_loss_per_trade_usd": 500}})
+        self.assertEqual((money["budget"], money["max_loss_per_trade_usd"], money["max_daily_loss_usd"],
+                          money["min_order_usd"]), (100000, 500, 1500.0, 0))
         self.assertEqual(entry.DEFAULTS["no_entries_after"], "15:00")
         entry.use_market("us")
         self.assertEqual(entry.DEFAULTS["no_entries_after"], "15:30")
 
-    def test_the_block_is_the_same_in_entry_and_exit(self):
+    def test_the_block_is_the_same_in_every_tool(self):
         def block(path):
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
             start = text.index("# ---------------------------------------------------------------- markets")
-            return text[start:text.index("class Localized")]
-        self.assertEqual(block(entry.__file__), block(exitp.__file__))
+            return text[start:text.index("# ---------------------------------------------------------------- end of markets")]
+        tools = ["trader-entry/entry.py", "trader-exit/exit.py", "trader-scanner/scan.py",
+                 "trader-timemachine/timemachine.py", "trader-budget/size.py", "trader-risk/check.py",
+                 "trader-alerts/alerts.py", "trader-broker/ticket.py", "trader-news/news.py",
+                 "trader-analyst/facts.py"]
+        blocks = {t: block(os.path.join(os.path.dirname(os.path.dirname(entry.__file__)), t)) for t in tools}
+        self.assertEqual(len(set(blocks.values())), 1, [t for t in tools if blocks[t] != blocks[tools[0]]])
 
 
 class EntryOnNse(unittest.TestCase):

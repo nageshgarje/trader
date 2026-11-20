@@ -102,9 +102,10 @@ python3 "${CLAUDE_SKILL_DIR}/entry.py" watch NIFTY --until 15:00
   they have no volume on Yahoo, so `--min-volume-x` is refused for them. An
   index cannot be bought: watch it for the signal, and trade NIFTYBEES.NS or
   a future.
-- Only `/trader-entry` and `/trader-exit` know NSE so far. The scanner, the
-  Time Machine, budget, risk, alerts and the broker (Alpaca is US only) still
-  assume the US market.
+- Every skill in the pack knows NSE: the scanner (the NIFTY 500), the Time
+  Machine, budget and risk (rupees), the broker (Zerodha's Kite MCP server,
+  paper tickets by default), alerts, news (Google News India) and the analyst
+  (Yahoo's quarterly figures). The Pelosi tracker is US only.
 
 ## Steps
 

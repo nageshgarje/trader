@@ -39,6 +39,7 @@ nothing here as advice.
 """
 
 import argparse
+import datetime
 import datetime as _dt
 import email.utils
 import gzip
@@ -49,6 +50,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -92,6 +94,212 @@ class NewsError(Exception):
     pass
 
 
+# ---------------------------------------------------------------- markets: US (NYSE) or India (NSE)
+# The same block lives in every tool that knows a market; tests/test_nse.py keeps the copies in step.
+
+NSE_HOLIDAYS = {  # NSE circular NSE/CMTR/71775 (2025-12-12): weekday trading holidays for 2026
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
+    "2026-12-25": "Christmas",
+}
+NSE_CALENDAR_YEARS = (2026,)   # Indian holidays follow the lunar calendar: no rule can fill other years
+NSE_INDEXES = {"NIFTY": "^NSEI", "NIFTY50": "^NSEI", "NIFTY_50": "^NSEI", "BANKNIFTY": "^NSEBANK",
+               "NIFTYBANK": "^NSEBANK", "FINNIFTY": "NIFTY_FIN_SERVICE.NS", "NIFTYIT": "^CNXIT"}
+MARKETS = {
+    "us": {"code": "us", "exchange": "NYSE", "place": "New York", "tz": "ET", "cur": "$",
+           "open": datetime.time(9, 30), "close": datetime.time(16, 0),
+           "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55"},
+    # NSE: 9:15 to 15:30 IST, no daylight saving. Brokers square off intraday positions from about
+    # 15:15 (Zerodha MIS 15:25), so the defaults stop new entries at 15:00 and get flat by 15:15.
+    "nse": {"code": "nse", "exchange": "NSE", "place": "India", "tz": "IST", "cur": "₹",
+            "open": datetime.time(9, 15), "close": datetime.time(15, 30),
+            "no_entries_before": "09:30", "no_entries_after": "15:00", "flat_by": "15:15"},
+}
+TIME_KEYS = ("no_entries_before", "no_entries_after", "flat_by")
+# Money limits are in the market's own currency. The "_usd" names are kept so one config serves every
+# tool, but on NSE they are rupees and come only from the "nse" block: $5,000 is never read as Rs 5,000.
+MONEY_KEYS = ("budget", "max_loss_per_trade_usd", "max_daily_loss_usd", "max_order_usd", "min_order_usd")
+MARKET = MARKETS["us"]
+
+
+def market_for(sym, override=None):
+    """"nse" for an NSE ticker (RELIANCE.NS, ^NSEI, NIFTY, BANKNIFTY) or when asked, else "us"."""
+    if override:
+        code = str(override).strip().lower()
+        code = {"india": "nse", "in": "nse", "nyse": "us", "usa": "us"}.get(code, code)
+        if code not in MARKETS:
+            raise ValueError("market is us or nse, not %r" % override)
+        return code
+    s = str(sym or "").upper().strip()
+    if s.endswith(".NS") or s.startswith("^NSE") or s.startswith("^CNX") or s in NSE_INDEXES:
+        return "nse"
+    return "us"
+
+
+def use_market(code, points=False):
+    """Switch the clock, the session, the calendar and the defaults to one market. points=True for
+    an index (NIFTY is quoted in points, not rupees): prices print with no currency sign."""
+    global MARKET, OPEN, CLOSE
+    MARKET = dict(MARKETS[code], cur="") if points else MARKETS[code]
+    OPEN, CLOSE = MARKET["open"], MARKET["close"]
+    defaults = globals().get("DEFAULTS")
+    if isinstance(defaults, dict):
+        for k in TIME_KEYS:
+            if k in defaults:
+                defaults[k] = MARKET[k]
+    hook = globals().get("on_market")    # a tool with its own session constants rebuilds them here
+    if hook:
+        hook()
+    return MARKET
+
+
+def is_nse():
+    return MARKET["code"] == "nse"
+
+
+def ysym(sym):
+    """The Yahoo ticker: BRK.B -> BRK-B in the US; RELIANCE -> RELIANCE.NS and NIFTY -> ^NSEI for NSE."""
+    s = str(sym).upper().strip()
+    if is_nse():
+        return NSE_INDEXES.get(s) or (s if s.startswith("^") or "." in s else s + ".NS")
+    return s.replace(".", "-")
+
+
+NSE_TICKER = re.compile(r"^\^?[A-Z0-9][A-Z0-9&_\-]{0,24}(\.NS)?$")   # M&M, BAJAJ-AUTO, 360ONE.NS, ^NSEI
+
+
+def nse_ticker_ok(sym):
+    return bool(NSE_TICKER.match(str(sym or "").strip().upper()))
+
+
+def is_index(sym):
+    return ysym(sym).startswith("^")
+
+
+def nse_closed(d):
+    """None when NSE trades on day d, else the reason it is closed."""
+    if d.weekday() >= 5:
+        return "weekend"
+    name = NSE_HOLIDAYS.get(d.isoformat())
+    return ("NSE holiday: " + name) if name else None
+
+
+def calendar_known(d):
+    return d.year in (NSE_CALENDAR_YEARS if is_nse() else globals().get("CALENDAR_YEARS", ()))
+
+
+def calendar_note():
+    if is_nse():
+        return ("NSE has published its holiday list for %s only, and Indian holidays follow the lunar "
+                "calendar: check nseindia.com for this date." % " and ".join(map(str, NSE_CALENDAR_YEARS)))
+    return ("NYSE published its holiday list for %s; this date uses its standing rules, which cannot "
+            "know a special closure: check nyse.com." % " and ".join(map(str, globals().get("CALENDAR_YEARS", ()))))
+
+
+def market_config(doc):
+    """The config for this market. The top-level clock times and money limits are the US ones. NSE takes
+    its own from an "nse" block ({"nse": {"budget": 100000, "max_loss_per_trade_usd": 500,
+    "no_entries_after": "14:30"}}, rupees), its clock defaults otherwise, a daily loss of three times the
+    max loss per trade, and no max or min order unless the block sets one."""
+    doc = dict(doc or {})
+    if is_nse():
+        for k in TIME_KEYS + MONEY_KEYS:
+            doc.pop(k, None)
+        doc.update(doc.get("nse") or {})
+        doc.setdefault("budget", None)
+        doc.setdefault("max_loss_per_trade_usd", None)
+        ml = doc.get("max_loss_per_trade_usd")
+        doc.setdefault("max_daily_loss_usd", 3 * float(ml) if isinstance(ml, (int, float)) else None)
+        doc.setdefault("max_order_usd", None)
+        doc.setdefault("min_order_usd", 0)
+    return doc
+
+
+SPLIT_FILES = ("trader/portfolio.json", "trader/state/broker.json")
+
+
+def market_path(path):
+    """NSE keeps its own account and decision log (rupees, its own daily limits): the default
+    trader/portfolio.json becomes trader/portfolio.nse.json, and the same for trader/state/broker.json."""
+    if is_nse() and path in SPLIT_FILES:
+        return path[:-len(".json")] + ".nse.json"
+    return path
+
+
+def localize(text):
+    """US words to this market's: $ -> the rupee sign, ET -> IST, NYSE -> NSE, New York -> India."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return text
+    cur = MARKET["cur"]
+    if not is_nse():
+        return text.replace("$", cur)
+    try:
+        cur.encode(getattr(sys.stdout, "encoding", None) or "utf-8")
+    except (UnicodeEncodeError, LookupError):
+        cur = "Rs "
+    text = text.replace("nyse.com", "nseindia.com").replace("NYSE", "NSE").replace("New York", "India")
+    return re.sub(r"\bET\b", "IST", text.replace("$", cur))
+
+
+class Localized(object):
+    """A stream that localizes what is written to it (stdout and stderr while an NSE run prints)."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, s):
+        return self.stream.write(localize(s))
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def run_localized(fn, *args):
+    """Run fn with stdout and stderr localized for this market, and restore them after."""
+    if not is_nse() and MARKET["cur"] == "$":
+        return fn(*args)
+    out, err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = Localized(out), Localized(err)
+    try:
+        return fn(*args)
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def peek_json(path):
+    """A JSON object from path, or {} when it is missing or not JSON (for picking the market early)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def run_in_market(code, sym, fn, *args):
+    """Run fn in one market (sym is the ticker, so an index prints in points), then go back to the US."""
+    use_market(code)                     # is_index needs the market: NIFTY is ^NSEI only on NSE
+    use_market(code, points=bool(sym) and is_index(sym))
+    try:
+        return run_localized(fn, *args)
+    finally:
+        use_market("us")
+
+# ---------------------------------------------------------------- end of markets
+
+
 # ---------------------------------------------------------------- time
 
 def _nth_sunday(year, month, n):
@@ -102,6 +310,8 @@ def _nth_sunday(year, month, n):
 
 def eastern_offset(utc):
     """Hours from UTC for New York: -4 in daylight time, -5 otherwise (US rule since 2007)."""
+    if is_nse():
+        return 5.5                     # India: IST, UTC+5:30 all year
     y = utc.year
     start = _dt.datetime.combine(_nth_sunday(y, 3, 2), _dt.time(7, 0))   # 2:00 EST
     end = _dt.datetime.combine(_nth_sunday(y, 11, 1), _dt.time(6, 0))    # 2:00 EDT
@@ -191,8 +401,66 @@ class Fetcher(object):
             raise NewsError("could not reach %s: %s" % (url, exc.reason))
 
 
+def is_nse_ticker(ticker):
+    return is_nse() or market_for(ticker) == "nse"
+
+
 def yahoo_symbol(ticker):
-    return ticker.upper().replace(".", "-")
+    t = ticker.upper()
+    if is_nse_ticker(t):
+        return NSE_INDEXES.get(t) or (t if t.startswith("^") or "." in t else t + ".NS")
+    return t.replace(".", "-")
+
+
+# NSE: Yahoo's headline feed is empty for Indian tickers and NSE's own announcement feeds refuse scripts,
+# so Indian headlines come from Google News (India edition), searched by company name.
+GNEWS = "https://news.google.com/rss/search?q=%s&hl=en-IN&gl=IN&ceid=IN:en"
+INDEX_NAMES = {"^NSEI": "Nifty 50", "^NSEBANK": "Bank Nifty", "^CNXIT": "Nifty IT",
+               "NIFTY_FIN_SERVICE.NS": "Nifty Financial Services"}
+
+
+def nse_names(path="trader/universe.nse.txt"):
+    """{RELIANCE.NS: Reliance Industries Ltd.} from trader-scanner's NSE universe, if there is one."""
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for ln in fh:
+                if "|" in ln:
+                    sym, name = ln.rstrip("\n").split("|", 1)
+                    out[sym.strip().upper()] = name.strip()
+    except OSError:
+        pass
+    return out
+
+
+def gnews_url(ticker, name=None):
+    """A Google News search for the company: its name (Ltd., Limited dropped) in quotes, last 2 days."""
+    ysym_ = yahoo_symbol(ticker)
+    name = INDEX_NAMES.get(ysym_) or name or nse_names().get(ysym_)
+    if name:
+        name = re.sub(r"\s+(Ltd\.?|Limited)$", "", name.strip(), flags=re.I)
+        q = '"%s" when:2d' % name
+    else:
+        q = '"%s" NSE when:2d' % ysym_.split(".")[0].lstrip("^")
+    return GNEWS % urllib.parse.quote(q)
+
+
+def parse_gnews(data, ticker):
+    """Google News RSS -> items. The title ends " - Publisher"; the description is HTML."""
+    items = parse_rss(data, ticker)
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return items
+    pubs = [(_text(it, "source") or "") for it in root.iter("item")]
+    for it, pub in zip(items, pubs):
+        it["source"] = "Google News" + (" (%s)" % pub if pub else "")
+        if pub and it["title"].endswith(" - " + pub):
+            it["title"] = it["title"][:-len(" - " + pub)]
+        it["summary"] = re.sub(r"<[^>]+>", " ", it.get("summary") or "").replace("&nbsp;", " ").strip()
+        it["summary"] = " ".join(it["summary"].split())
+        it["id"] = "gnews:" + it["id"][4:]
+    return items
 
 
 def cik_map(fetcher, state):
@@ -383,9 +651,14 @@ def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=No
     items = []
     for t in sorted(watch):
         try:
-            items += parse_rss(fetcher.get(YAHOO % yahoo_symbol(t), "yahoo-%s.xml" % t), t)
+            if is_nse_ticker(t):
+                items += parse_gnews(fetcher.get(gnews_url(t, watch.get(t)), "gnews-%s.xml" % t), t)
+            else:
+                items += parse_rss(fetcher.get(YAHOO % yahoo_symbol(t), "yahoo-%s.xml" % t), t)
         except NewsError as exc:
             errors.append("headlines for %s: %s" % (t, exc))
+    if sec and all(is_nse_ticker(t) for t in watch):
+        sec = False                          # Indian companies file with NSE/BSE, not the SEC
     if sec:
         try:
             ciks = cik_map(fetcher, state)
@@ -393,6 +666,8 @@ def collect(fetcher, watch, state, sec=True, forms=("8-K",), count=10, errors=No
             errors.append("SEC ticker list: %s" % exc)
             ciks = {}
         for t in sorted(watch):
+            if is_nse_ticker(t):
+                continue
             cik = ciks.get(t)
             if not cik:
                 if ciks:
@@ -495,10 +770,22 @@ def main(argv=None):
     ap.add_argument("--config", default="trader/config.json")
     ap.add_argument("--offline", metavar="DIR")
     ap.add_argument("--now", help="ISO time, for reproducible runs")
+    ap.add_argument("--market", choices=["us", "nse"],
+                    help="nse: India (Google News headlines, IST); .NS tickers are NSE by themselves")
     ap.add_argument("--dry-run", action="store_true", help="do not update the state file")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+    try:
+        tickers = args.tickers or list(watch_from_files(args.portfolio, args.watchlist, args.plan))
+        code = market_for(None, args.market) if args.market else (
+            "nse" if tickers and all(market_for(t) == "nse" for t in tickers) else "us")
+    except ValueError as e:
+        print("news.py: %s" % e, file=sys.stderr)
+        return 2
+    return run_in_market(code, None, _run, args)
 
+
+def _run(args):
     if args.tickers:
         watch = {t.upper(): None for t in args.tickers}
         known = watch_from_files(args.portfolio, args.watchlist, args.plan)

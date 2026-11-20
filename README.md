@@ -120,6 +120,49 @@ An example, the trade in the reel: Tesla, Monday October 19 2026, real data.
 9. **`/trader-alerts`** rings on the stop, the target and at 3:55 PM to
    flatten whatever is still open.
 
+## India: NSE (NIFTY, Reliance and the NIFTY 500)
+
+Every skill also works on India's National Stock Exchange. An NSE ticker
+(`RELIANCE.NS`, `NIFTY`, `BANKNIFTY`) switches it on by itself, or pass
+`--market nse`, or put `"market": "nse"` in `trader/config.json`.
+
+```bash
+python3 trader-scanner/scan.py universe --market nse      # the NIFTY 500
+python3 trader-scanner/scan.py orb --market nse           # 9:15-9:30 IST range breakouts
+python3 trader-entry/entry.py check RELIANCE.NS --write
+python3 trader-exit/exit.py plan --write                  # stop and target on NSE's tick size
+python3 trader-timemachine/timemachine.py run --write     # replays to 15:15 IST
+python3 trader-budget/size.py --write                     # rupees: the buy and its SL-M stop
+python3 trader-risk/check.py
+python3 trader-broker/ticket.py show                      # Zerodha Kite tickets
+python3 trader-alerts/alerts.py add --from-plan
+python3 trader-news/news.py --tickers RELIANCE.NS         # Google News, India edition
+python3 trader-analyst/facts.py RELIANCE.NS               # Yahoo's quarterly figures, Rs crore
+```
+
+What changes for NSE:
+
+- **Clock and calendar**: IST (no daylight saving), 9:15 to 15:30, entries
+  9:30 to 15:00, flat by 15:15 (before the broker's intraday square-off), and
+  NSE's 2026 holiday list (circular NSE/CMTR/71775). Indian holidays follow the
+  lunar calendar, so other years need NSE's next circular.
+- **Money**: an `"nse"` block in `trader/config.json` holds the rupee budget
+  and limits (see `trader-budget/config.example.json`). The top-level dollar
+  budget is never read as rupees. NSE keeps its own account and log
+  (`trader/portfolio.nse.json`, `trader/state/broker.nse.json`).
+- **Orders**: Zerodha has no bracket orders. trader-budget writes an intraday
+  (MIS) buy and its SL-M stop as two orders; the stop goes in once the buy
+  fills, and the target is an alert. trader-broker builds tickets for Zerodha's
+  own Kite MCP server, which you run yourself with your Kite Connect keys (the
+  hosted one cannot place orders). **Zerodha has no paper account**, so
+  `"paper": true` means tickets and simulated fills only: nothing is sent.
+- **Data**: Yahoo for bars and quotes, NSE's NIFTY 500 list for the scanner (a
+  dated snapshot ships with it, since NSE often refuses scripts), Google News
+  India for headlines, Yahoo's quarterly figures for earnings (unofficial:
+  check the company's results on nseindia.com). The Pelosi tracker is US only.
+- **Indexes**: NIFTY and BANKNIFTY work for signals and prints in points, but an
+  index cannot be bought: trade NIFTYBEES.NS or a future.
+
 ## The tools
 
 All standard-library Python. The data tools read public endpoints and are
@@ -199,7 +242,7 @@ wash sales likely. Nothing here is tax advice.
 ## Files
 
 ```
-trader-scanner/     SKILL.md, scan.py
+trader-scanner/     SKILL.md, scan.py, nse/ (NIFTY 500 snapshot)
 trader-news/        SKILL.md, news.py
 trader-entry/       SKILL.md, entry.py
 trader-exit/        SKILL.md, exit.py

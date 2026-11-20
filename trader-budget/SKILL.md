@@ -140,6 +140,25 @@ needs prices (`--prices trader/prices.json`). These are plain buys with no stop:
 `require_stop` is true and counts each one against `max_trades_per_day`. Use
 a separate config (`--config`) for a long-term split.
 
+## India: NSE
+
+A plan for an NSE stock is sized in **rupees**, from an `"nse"` block in `trader/config.json`. The
+top-level budget and limits are dollars for US trades and are never read as rupees:
+
+```json
+"nse": {"budget": 100000, "max_loss_per_trade_usd": 500, "max_position_pct": 75,
+        "no_entries_after": "15:00", "flat_by": "15:15"}
+```
+
+(The `_usd` names are kept so one config serves both markets; under `"nse"` they are rupees.) The daily
+loss limit defaults to three times the max loss per trade. Without a rupee budget and max loss it
+refuses and says what to set.
+
+Zerodha has **no bracket orders**, so it writes two orders to `trader/orders.json`: 1. the intraday
+(MIS) buy, 2. its protective **SL-M stop**, a sell of the same shares, placed only after 1 fills. The
+target is a trader-alerts alert, not a resting order: a second sell could leave you short once the
+stop fills. An index (NIFTY) cannot be bought: plan NIFTYBEES.NS or a future instead.
+
 ## Rules
 
 - Proposals only. This skill never calls a broker tool.

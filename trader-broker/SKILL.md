@@ -135,6 +135,50 @@ submits orders directly to the market. So with IBKR the final yes happens in
 IBKR as well. Set `"broker": "ibkr"` in `trader/config.json`. Set its tools
 that draft orders to Needs approval too.
 
+## Setup C: Zerodha, for India's NSE (Kite MCP server)
+
+Zerodha publishes an official MCP server: github.com/zerodha/kite-mcp-server (checked 2026-11-20).
+Its hosted version (`https://mcp.kite.trade/mcp`) leaves out `place_order`, `modify_order` and
+`cancel_order`, so it can read positions and orders but not trade. To place orders the user runs the
+server on their own computer with their own **Kite Connect** API key and secret:
+
+1. The user creates a Kite Connect app at developers.kite.trade and gets its API key and secret.
+2. They clone and build the server (Go 1.21+): `git clone https://github.com/zerodha/kite-mcp-server`,
+   then `go build -o kite-mcp-server`, and run it with `KITE_API_KEY`, `KITE_API_SECRET` and
+   `APP_MODE=http` in its `.env` file. **Keys go in that file, never in the chat.**
+3. In Claude Desktop's config they add the `kite` block from `claude_desktop_config.example.json`
+   (it connects through `mcp-remote` to `http://localhost:8080/mcp`), restart, and log in to Kite
+   when the server asks, in the browser, never in the chat.
+4. Tool permissions: `place_order`, `modify_order`, `cancel_order`, `place_gtt_order`: **Needs
+   approval**, never Always allow. Read tools (`get_positions`, `get_orders`, `get_margins`,
+   `get_holdings`): Always allow is fine.
+
+**Zerodha has no paper account.** With `"paper": true` (the default) trader-broker shows each NSE
+ticket and the exact `place_order` JSON, records your yes, and calls **no** broker tool: record a
+simulated fill with `ticket.py result ... --note paper --filled-qty Q --filled-price P`. Real orders
+need `"paper": false` in `trader/config.json`, set by the user themselves.
+
+**How an NSE trade goes** (Zerodha has no bracket orders):
+
+1. Order 1, the MIS buy: READY after trader-risk passes it. Yes, `place_order`, `result`.
+2. Order 2, the SL-M stop for the shares that filled: it stays WAITING until order 1 is recorded as
+   placed. Then its own yes, `place_order`, `result`. Until it is in, there is no stop at the broker.
+3. The target and the flat-by time (15:15 IST) are trader-alerts alerts. To get out: `get_orders`,
+   `cancel_order` the open SL-M (variety regular, its order_id) **first**, then `get_positions` for
+   what is still held (the stop may have filled meanwhile), `ticket.py flatten --symbol RELIANCE.NS
+   --qty Q`, `/trader-risk`, a yes, `place_order`. Selling while the SL-M is still open could sell the
+   shares twice and leave an MIS short. Zerodha also squares off MIS positions itself near the close,
+   for a charge.
+
+Kite's `place_order` takes Kite's names and numbers as numbers, for example:
+
+```json
+{"variety": "regular", "exchange": "NSE", "tradingsymbol": "RELIANCE", "transaction_type": "BUY",
+ "quantity": 54, "product": "MIS", "order_type": "MARKET", "validity": "DAY"}
+```
+
+and the stop: `"transaction_type": "SELL", "order_type": "SL-M", "trigger_price": 1360.9`.
+
 ## Steps: the entry
 
 1. `ticket.py show`. Only READY tickets go to the user. A ticket that is NOT
@@ -198,6 +242,8 @@ buttons: Allow once, Deny. Allow once sends it to the paper account. The
 - Never asks for, reads, stores or repeats API keys or passwords.
 - Never switches `ALPACA_PAPER_TRADE` or `"paper"` to live. The user does that themselves.
 - Never calls `close_all_positions`, `cancel_all_orders`, option or crypto order tools on its own.
+- Never calls Kite's `place_order` on paper (`"paper": true`): Zerodha has no paper account, so paper
+  NSE trades are tickets and simulated fills only.
 - Never promises a fill price: a market order and a stop fill at whatever the market gives.
 
 ## Safety

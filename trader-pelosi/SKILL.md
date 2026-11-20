@@ -132,6 +132,12 @@ does not click it or automate it. The route:
    and you write it up in the same shape as the House rows, with the report
    link, and the same 45-day caveat.
 
+## India
+
+This skill is US only. Indian MPs do not file stock-trade reports like the STOCK Act's PTRs, so there
+is nothing equivalent to read for NSE stocks. Say so plainly if the user asks about Indian
+politicians' trades.
+
 ## What it never does
 
 - Never says or implies a member has inside information, or that copying a

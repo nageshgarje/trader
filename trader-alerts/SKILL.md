@@ -104,6 +104,15 @@ of January, Good Friday, observed dates and so on). Those rules cannot know
 a special closure, such as a national day of mourning, so for those years it
 says to check nyse.com.
 
+## India: NSE
+
+Rules for NSE stocks (added from an NSE plan, or with an `.NS` ticker) remember `"market": "nse"`,
+and `check` runs each market's rules on its own clock, so one alerts file can watch a US trade and an
+NSE trade. NSE: IST, 9:15 to 15:30, NSE's 2026 holidays, no early closes, quotes from Yahoo (`.NS`;
+Stooq has no NSE quotes), prices in rupees. From an NSE plan the flat-by alert is 15:15. The stop alert
+is a second check: the SL-M order at Zerodha is what actually stops you out, and the target is only an
+alert (Zerodha has no bracket orders). `clock --market nse` shows the NSE session.
+
 ## Steps
 
 1. Right after trader-exit writes the plan, run `add --from-plan`. Confirm
